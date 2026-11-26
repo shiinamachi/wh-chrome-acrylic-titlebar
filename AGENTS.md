@@ -93,6 +93,10 @@ docs: update installation guide
 - 배포 커밋은 fork의 브랜치에 `mods/chrome-acrylic-titlebar.wh.cpp` 파일 하나만 바꾸고, 메시지는 상류 관례대로 `Chrome Acrylic Titlebar v<버전>`으로 씁니다.
 - **브랜치에 push까지만 합니다.** `ramensoftware/windhawk-mods`에 PR을 여는 것, 상류 저장소에 댓글이나 이슈를 남기는 것은 사용자가 명시적으로 요청할 때만 합니다. "제출"처럼 모호한 표현은 push까지로 해석하고 묻습니다. 공개 PR은 삭제할 수 없고 닫기만 할 수 있습니다.
 - 상류 PR 규칙: 파일 하나(`mods/<mod-id>.wh.cpp`)만 담고, `@github`가 PR 작성자 프로필과 같아야 하며, PR 본문에 템플릿의 "Mod authorship" 섹션을 남겨야 합니다.
+- 작성자 메타데이터:
+  - `@author`는 표시 이름이라 `shiinamachi`를 씁니다.
+  - `@github`는 PR을 여는 사용자 계정인 `https://github.com/kentakang`으로 둡니다. `shiinamachi`는 조직 계정이라 PR 작성자가 될 수 없어서, `@github`를 조직으로 바꾸면 상류 검사가 항상 실패합니다.
+  - 상류에 한 번 등록되면 두 값 모두 바꿀 수 없으니 임의로 바꾸지 않습니다.
 
 ### 릴리즈 요청을 받았을 때
 
