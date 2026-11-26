@@ -1134,8 +1134,25 @@ bool IsBrowserProcess() {
 
 }  // namespace
 
+// DWMWA_SYSTEMBACKDROP_TYPE exists from Windows 11 22H2 (build 22621). Without
+// it the tab strip would be left transparent with no backdrop behind it.
+static bool IsSystemBackdropSupported() {
+    using RtlGetVersion_t = LONG(WINAPI*)(OSVERSIONINFOW*);
+    const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    const auto rtlGetVersion =
+        ntdll ? reinterpret_cast<RtlGetVersion_t>(GetProcAddress(ntdll, "RtlGetVersion"))
+              : nullptr;
+    OSVERSIONINFOW version{};
+    version.dwOSVersionInfoSize = sizeof(version);
+    return rtlGetVersion && rtlGetVersion(&version) == 0 && version.dwBuildNumber >= 22621;
+}
+
 BOOL Wh_ModInit() {
     if (!IsBrowserProcess()) {
+        return FALSE;
+    }
+    if (!IsSystemBackdropSupported()) {
+        Wh_Log(L"Windows 11 22H2 or later is required");
         return FALSE;
     }
     g_isBrowserProcess = true;
