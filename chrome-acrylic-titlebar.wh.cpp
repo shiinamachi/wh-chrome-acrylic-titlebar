@@ -35,7 +35,10 @@ Incognito windows get a darker tint, so you can still tell them apart:
 ## Getting started
 
 To find the parts of Chrome it changes, the mod needs Chrome's debug symbols.
-Windhawk downloads them from Google the first time, which takes a while.
+The first time, Windhawk downloads them from Google's symbol server,
+`chromium-browser-symsrv.commondatastorage.googleapis.com`, which takes a
+while. The request tells the server which Chrome version is installed. You can
+turn this off with the **Download symbols from Google** setting.
 
 1. Enable the mod and start Chrome. Chrome opens normally, without the
    effect, while the symbols download in the background (about 1.1 GB).
@@ -45,8 +48,11 @@ Windhawk downloads them from Google the first time, which takes a while.
 
 Later starts apply the effect right away. After each Chrome update, the
 symbols for the new version are downloaded once more, so repeat these steps.
-Downloaded symbols are kept in `C:\ProgramData\Windhawk\Engine\Symbols`; you
-can delete folders for old Chrome versions to free disk space.
+
+The symbols take about 6 GB on disk for each Chrome version and are kept in
+Windhawk's Symbols folder (`C:\ProgramData\Windhawk\Engine\Symbols` for a
+regular install). Symbols for old Chrome versions aren't removed
+automatically; delete their folders to free disk space.
 
 While the symbols for your Chrome version aren't downloaded yet, Chrome may
 take up to 4 extra seconds to start. If you turn the mod off or update it
