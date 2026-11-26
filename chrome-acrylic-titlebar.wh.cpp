@@ -974,9 +974,10 @@ bool InstallChromeHooks() {
             &g_origFrameOnPaint)) {
         return false;
     }
+    // Also used by the frame's incognito tint, independently of the toolbar hook.
+    g_drawColor = reinterpret_cast<DrawColor_t>(address[kDrawColor]);
     if (address[kOnPaintBackground] && address[kGetClassName] && address[kDrawColor]) {
         g_getClassName = reinterpret_cast<GetClassName_t>(address[kGetClassName]);
-        g_drawColor = reinterpret_cast<DrawColor_t>(address[kDrawColor]);
         g_toolbarAvailable.store(WindhawkUtils::SetFunctionHook(
             reinterpret_cast<Paint_t>(address[kOnPaintBackground]),
             OnPaintBackground_Hook, &g_origOnPaintBackground));
@@ -995,6 +996,14 @@ bool InstallChromeHooks() {
             Wh_Log(L"Glass tab strip hook unavailable");
         }
     }
+    // Incognito detection doesn't depend on the color hooks below.
+    g_hwndForView = reinterpret_cast<HwndForView_t>(address[kHwndForView]);
+    if (address[kGetBrowserView] && address[kGetProfile] && address[kIsIncognitoProfile]) {
+        g_getBrowserView = reinterpret_cast<GetPointer_t>(address[kGetBrowserView]);
+        g_getProfile = reinterpret_cast<GetPointer_t>(address[kGetProfile]);
+        g_isIncognitoProfile =
+            reinterpret_cast<IsIncognitoProfile_t>(address[kIsIncognitoProfile]);
+    }
     if (address[kGetColor] && address[kChromeColorIdName]) {
         if (ResolveColorIds(g_lookup.module, address[kChromeColorIdName]) &&
             WindhawkUtils::SetFunctionHook(reinterpret_cast<GetColor_t>(address[kGetColor]),
@@ -1005,14 +1014,6 @@ bool InstallChromeHooks() {
                     reinterpret_cast<GetTabPath_t>(address[kGetTabPath]), GetTabPath_Hook,
                     &g_origGetTabPath)) {
                 Wh_Log(L"Active tab shape hook unavailable");
-            }
-            if (address[kGetBrowserView] && address[kGetProfile] &&
-                address[kIsIncognitoProfile]) {
-                g_getBrowserView = reinterpret_cast<GetPointer_t>(address[kGetBrowserView]);
-                g_getProfile = reinterpret_cast<GetPointer_t>(address[kGetProfile]);
-                g_isIncognitoProfile =
-                    reinterpret_cast<IsIncognitoProfile_t>(address[kIsIncognitoProfile]);
-                g_hwndForView = reinterpret_cast<HwndForView_t>(address[kHwndForView]);
             }
             if (address[kPaintTab] && address[kDrawRoundRect] &&
                 (!WindhawkUtils::SetFunctionHook(
