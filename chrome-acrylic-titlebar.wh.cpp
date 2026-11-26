@@ -19,11 +19,11 @@ Lets the Windows 11 Acrylic effect show through the top of Google Chrome.
 The tab strip and the toolbar become see-through and blurred, like the rest of
 a Windows 11 style desktop, while web pages stay exactly as they are.
 
-![Chrome with Chrome Acrylic Titlebar](https://raw.githubusercontent.com/shiinamachi/wh-chrome-acrylic-titlebar/main/images/chrome-normal.webp)
+![Chrome with Chrome Acrylic Titlebar](https://raw.githubusercontent.com/shiinamachi/wh-chrome-acrylic-titlebar/refs/heads/main/images/chrome-normal.webp)
 
 Incognito windows get a darker tint, so you can still tell them apart:
 
-![An incognito window with Chrome Acrylic Titlebar](https://raw.githubusercontent.com/shiinamachi/wh-chrome-acrylic-titlebar/main/images/chrome-incognito.webp)
+![An incognito window with Chrome Acrylic Titlebar](https://raw.githubusercontent.com/shiinamachi/wh-chrome-acrylic-titlebar/refs/heads/main/images/chrome-incognito.webp)
 
 ## Requirements
 

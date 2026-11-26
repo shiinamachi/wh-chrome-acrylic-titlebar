@@ -77,7 +77,7 @@ docs: update installation guide
 
 ### 이미지
 
-- README 이미지는 이 저장소의 `images/`에 두고, Markdown 이미지 문법으로 `https://raw.githubusercontent.com/shiinamachi/wh-chrome-acrylic-titlebar/main/images/<파일>` 주소를 씁니다. 상류는 `i.imgur.com`과 `raw.githubusercontent.com`의 공개 주소만 받고, 상대 경로나 `<img>` 태그는 오류입니다. 그래서 이 저장소는 공개로 둡니다.
+- README 이미지는 이 저장소의 `images/`에 두고, Markdown 이미지 문법으로 `https://raw.githubusercontent.com/shiinamachi/wh-chrome-acrylic-titlebar/refs/heads/main/images/<파일>` 주소를 씁니다. 상류는 `i.imgur.com`과 `raw.githubusercontent.com`의 공개 주소만 받고, 상대 경로나 `<img>` 태그는 오류입니다. 그래서 이 저장소는 공개로 둡니다.
 - 상류는 이미지를 처음 본 때의 내용으로 보관하고 갱신하지 않습니다. 이미지를 바꿀 때는 기존 파일을 덮어쓰지 말고 **새 파일 이름**으로 추가한 뒤 README 주소를 바꿉니다.
 - 이미지 하나는 2 MB 미만으로 유지합니다.
 - 스크린샷에 개인 정보(프로필 사진, 작업 표시줄 앱, 열린 탭 제목 등)가 보이면 넣기 전에 사용자에게 확인합니다.
