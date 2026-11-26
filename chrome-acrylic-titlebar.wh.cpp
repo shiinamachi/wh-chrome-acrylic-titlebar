@@ -38,6 +38,7 @@ it. The mod hooks a few functions in `chrome.dll`:
   (`ChromeColorIdName`), so they follow Chrome updates.
 - `HorizontalTabStyleViews::GetPath` gives the active tab the rounded hover
   shape instead of the file-folder shape that joins the toolbar.
+- `TabStyle::GetContrastRatioValues` fades the separators between tabs.
 
 The backdrop Chrome requests (`DWMSBT_MAINWINDOW`) is replaced with the one
 chosen in the settings, Acrylic by default.
@@ -96,7 +97,7 @@ bardelyne (MIT).
   $description: Also clear the toolbar and bookmarks bar backgrounds. Applies immediately.
 - translucentControls: true
   $name: Translucent controls
-  $description: Make the address field translucent, draw the active tab as a light rounded highlight, and show the tab search and new tab button backgrounds only on hover. The focused address field stays opaque to match its suggestions. Restart Chrome to apply.
+  $description: Make the address field translucent, draw the active tab as a light rounded highlight, fade the separators between tabs, and show the tab search and new tab button backgrounds only on hover. The focused address field stays opaque to match its suggestions. Restart Chrome to apply.
 - hideNativeCaptionButtons: true
   $name: Hide duplicate Windows caption buttons
   $description: Hide the minimize, maximize and close buttons that Windows draws under the transparent tab strip. This removes WS_SYSMENU from browser windows, which can change the Alt+Space menu.
@@ -146,6 +147,7 @@ enum Slot : unsigned {
     kGetColor,
     kChromeColorIdName,
     kGetTabPath,
+    kGetContrastRatioValues,
     kSlotCount,
 };
 constexpr std::wstring_view kSymbols[kSlotCount] = {
@@ -182,6 +184,10 @@ constexpr std::wstring_view kSymbols[kSlotCount] = {
     // protected: virtual SkPath HorizontalTabStyleViews::GetPath(
     //     TabStyle::PathType, float, const TabPathFlags&) const
     L"?GetPath@HorizontalTabStyleViews@@MEBA?AVSkPath@@W4PathType@TabStyle@@MAEBUTabPathFlags@@@Z",
+    // public: std::tuple<float, float, float, SkColor>
+    //     TabStyle::GetContrastRatioValues(bool, const ui::ColorProvider*) const
+    // The SkColor is the separator color, blended from the tab text color.
+    L"?GetContrastRatioValues@TabStyle@@QEBA?AV?$tuple@MMMI@__Cr@std@@_NPEBVColorProvider@ui@@@Z",
 };
 
 // TabStyle::PathType. kActiveTab is only used for the active tab's fill;
@@ -206,6 +212,9 @@ using GetColor_t = unsigned int (*)(const void* provider, int id);
 // SkPath is returned through a hidden pointer passed after `this`.
 using GetTabPath_t = void* (*)(const void* style, void* path, int type, float scale,
                                const void* flags);
+// The tuple is returned through a hidden pointer passed after `this`.
+using GetContrastRatioValues_t = void* (*)(const void* style, void* values, bool frameActive,
+                                           const void* provider);
 constexpr int kSkBlendModeClear = 0;
 
 // Settings.
@@ -232,6 +241,12 @@ InitFromModel_t g_origInitFromModel = nullptr;
 SetIsGlassFrame_t g_setIsGlassFrame = nullptr;
 GetColor_t g_origGetColor = nullptr;
 GetTabPath_t g_origGetTabPath = nullptr;
+GetContrastRatioValues_t g_origGetContrastRatioValues = nullptr;
+
+// std::tuple<float, float, float, SkColor>: the separator color follows the
+// three floats.
+constexpr size_t kSeparatorColorOffset = 3 * sizeof(float);
+constexpr unsigned kSeparatorAlpha = 0x4D;
 
 // Chrome colors to restyle, resolved by name at startup.
 // kScaleAlpha keeps the RGB, so the light or dark theme still applies, and
@@ -432,6 +447,22 @@ void* GetTabPath_Hook(const void* style, void* path, int type, float scale,
         type = kTabPathHighlight;
     }
     return g_origGetTabPath(style, path, type, scale, flags);
+}
+
+void* GetContrastRatioValues_Hook(const void* style, void* values, bool frameActive,
+                                  const void* provider) {
+    void* result = g_origGetContrastRatioValues(style, values, frameActive, provider);
+    if (values && g_colorsReady.load(std::memory_order_acquire) &&
+        g_translucentControls.load(std::memory_order_relaxed) &&
+        g_active.load(std::memory_order_acquire)) {
+        auto* bytes = static_cast<unsigned char*>(values);
+        unsigned int color = 0;
+        std::memcpy(&color, bytes + kSeparatorColorOffset, sizeof(color));
+        const unsigned int alpha = (color >> 24) * kSeparatorAlpha / 0xFF;
+        color = (color & 0x00FFFFFF) | (alpha << 24);
+        std::memcpy(bytes + kSeparatorColorOffset, &color, sizeof(color));
+    }
+    return result;
 }
 
 // ChromeColorIdName() binary-searches a sorted {ColorId, const char*} table.
@@ -847,6 +878,12 @@ bool InstallChromeHooks() {
                     reinterpret_cast<GetTabPath_t>(address[kGetTabPath]), GetTabPath_Hook,
                     &g_origGetTabPath)) {
                 Wh_Log(L"Active tab shape hook unavailable");
+            }
+            if (address[kGetContrastRatioValues] &&
+                !WindhawkUtils::SetFunctionHook(
+                    reinterpret_cast<GetContrastRatioValues_t>(address[kGetContrastRatioValues]),
+                    GetContrastRatioValues_Hook, &g_origGetContrastRatioValues)) {
+                Wh_Log(L"Tab separator hook unavailable");
             }
         } else {
             Wh_Log(L"Translucent controls unavailable");
