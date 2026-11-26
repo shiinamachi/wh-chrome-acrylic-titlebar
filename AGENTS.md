@@ -159,15 +159,15 @@ Chrome은 창에 Mica 배경을 지정하지만 탭 줄과 주소창 줄을 불�
 
 | 대상 | 후킹 | 하는 일 |
 | --- | --- | --- |
-| 창 투명도 | `BrowserDesktopWindowTreeHostWin::ShouldWindowContentsBeTransparent` | `true`를 돌려줘 브라우저 창을 투명 배경으로 출력하게 합니다. 이때 같은 스레드에서 막 만든 HWND를 브라우저 창으로 표시합니다. |
+| 창 투명도 | `BrowserDesktopWindowTreeHostWin::ShouldWindowContentsBeTransparent` | `true`를 돌려줘 브라우저 창을 투명 배경으로 출력하게 합니다. |
 | 배경 효과 | `DwmSetWindowAttribute`(`DWMWA_SYSTEMBACKDROP_TYPE`) | 표시한 창의 Mica 요청을 설정한 효과(기본 Acrylic)로 바꿉니다. |
-| 제목 표시줄 | `BrowserFrameViewWin::OnPaint` | 칠하지 않습니다. 시크릿 창이면 어두운 틴트를 칠하고 HWND에 시크릿 표시를 남깁니다(`BrowserFrameView::GetBrowserView` → `BrowserView::GetProfile` → `Profile::IsIncognitoProfile`, `views::HWNDForView`). |
+| 제목 표시줄 | `BrowserFrameViewWin::OnPaint` | 칠하지 않습니다. 처음 그릴 때 그 창의 HWND(`views::HWNDForView`)를 브라우저 창으로 표시하고 배경 효과를 바꿉니다. 이 함수는 브라우저 창 프레임만 거치므로 다른 Chrome 창은 표시되지 않습니다. 시크릿 창이면 어두운 틴트를 칠하고 HWND에 시크릿 표시를 남깁니다(`BrowserFrameView::GetBrowserView` → `BrowserView::GetProfile` → `Profile::IsIncognitoProfile`, `views::HWNDForView`). |
 | 비활성 탭 | `BrowserTabStripController::InitFromModel` 직후 `TabStrip::SetIsGlassFrame(true)` | macOS의 유리 프레임처럼 비활성 탭이 배경을 칠하지 않게 합니다. Windows에는 이 상태를 켜는 `GlassFrameService`가 없습니다. 새 `TabView` 경로에 대비해 `TabStyleViewDelegateImpl::ShouldPaintTabBackgroundColor`도 `false`를 돌려줍니다. |
 | 주소창 줄 | `views::View::OnPaintBackground` | 클래스 이름이 `ToolbarView`, `BookmarkBarView`면 `kClear`로 지우고 시크릿 창이면 틴트를 다시 칠합니다(아래에 Chrome이 칠한 불투명한 층이 있어서, 칠하지 않기만으로는 투명해지지 않습니다). `OmniboxViewViews`, `LocationIconView`, `ToolbarDivider`는 배경을 건너뜁니다. |
 | 색 | `ui::ColorProvider::GetColor` | 주소창(`kColorLocationBarBackground*`)은 알파만 낮추고, 활성 탭(`kColorTabBackgroundActiveFrame*`)과 시크릿 칩(`kColorAvatarButtonHighlightIncognito`)은 어두운 테마에서 흰색 반투명 강조로, 탭 줄 버튼 배경(`kColorNewTabButton*Background*`, `kColorTabSearchButtonBackground`)은 투명하게 합니다. 색 ID는 `ChromeColorIdName`의 `{ID, 이름}` 표에서 이름으로 찾습니다. |
 | 활성 탭 모양 | `HorizontalTabStyleViews::GetPath` | `PathType::kActiveTab`(0) 요청에 `kHighlight`(3)를 돌려줘, 주소창 줄과 이어지는 폴더 모양 대신 둥근 모양으로 그립니다. |
 | 탭 구분선 | `HorizontalTabStyleViews::PaintTab` 동안 `gfx::Canvas::DrawRoundRect` | 탭 그리기에서 이 함수는 구분선에만 쓰이므로 건너뜁니다. 구분선 색은 Chrome이 알파를 덮어써서 색으로는 숨길 수 없습니다. |
-| 창 단추 | `CreateWindowExW`, `Get/SetWindowLong(Ptr)W` | 투명한 탭 줄 아래에 Windows가 그리는 기본 창 단추를 숨기려고 브라우저 창의 `WS_SYSMENU`를 빼고, Chromium에는 원래 스타일을 보여 줍니다(Brave Acrylic 방식). |
+| 창 단추 | `Get/SetWindowLong(Ptr)W` | 투명한 탭 줄 아래에 Windows가 그리는 기본 창 단추를 숨기려고 표시한 브라우저 창의 `WS_SYSMENU`를 빼고, Chromium에는 원래 스타일을 보여 줍니다(Brave Acrylic 방식). 스타일 변경은 그리기 도중에 하지 않도록 스레드 풀에서 합니다. |
 
 심볼은 `chrome.dll`이 로드될 때 작업 스레드에서 찾고 최대 4초 기다립니다. 그보다 오래 걸리면 Chrome은 효과 없이 시작하고, 찾은 주소는 Windhawk가 캐시해 다음 실행부터 적용됩니다.
 

@@ -385,9 +385,8 @@ void LoadSettings() {
 // ---------------------------------------------------------------------------
 // Browser window identification
 //
-// Only browser windows (BrowserDesktopWindowTreeHostWin) ask the hooked
-// ShouldWindowContentsBeTransparent while they are created, right after their
-// HWND was created on the same thread. That HWND gets a property, and only
+// Only browser windows paint through BrowserFrameViewWin::OnPaint. The first
+// time a frame paints, its HWND (views::HWNDForView) gets a property, and only
 // marked windows get the backdrop and caption-button changes. Dialogs, task
 // manager and other Chrome windows keep their native frame untouched.
 
@@ -395,27 +394,11 @@ constexpr wchar_t kBrowserFrameProperty[] = L"Windhawk.ChromeAcrylicTitlebar.Fra
 // Set on incognito browser windows when their frame paints, so views painted
 // later (the toolbar) can repaint the tint after clearing their background.
 constexpr wchar_t kIncognitoProperty[] = L"Windhawk.ChromeAcrylicTitlebar.Incognito";
-constexpr ULONGLONG kCandidateMaxAgeMs = 2000;
-thread_local HWND t_candidate = nullptr;
-thread_local ULONGLONG t_candidateTick = 0;
-
 LONG_PTR RealStyle(HWND window);
-void ApplyNativeCaption(HWND window);
+void QueueNativeCaption(HWND window);
 
 bool IsBrowserFrameWindow(HWND window) {
     return window && GetPropW(window, kBrowserFrameProperty) != nullptr;
-}
-
-bool IsFrameCandidate(HWND window, DWORD style) {
-    constexpr DWORD kRequired =
-        WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
-    if ((style & kRequired) != kRequired || (style & WS_CHILD) ||
-        GetAncestor(window, GA_ROOT) != window || GetWindow(window, GW_OWNER)) {
-        return false;
-    }
-    wchar_t name[32]{};
-    return GetClassNameW(window, name, ARRAYSIZE(name)) &&
-           !wcscmp(name, L"Chrome_WidgetWin_1");
 }
 
 void MarkBrowserFrame(HWND window) {
@@ -426,7 +409,9 @@ void MarkBrowserFrame(HWND window) {
     const UINT backdrop = g_backdrop.load();
     g_origDwmSetWindowAttribute(window, kBackdropTypeAttribute, &backdrop,
                                 sizeof(backdrop));
-    ApplyNativeCaption(window);
+    // Changing the style sends window messages, so don't do it while Chrome is
+    // painting.
+    QueueNativeCaption(window);
 }
 
 // ---------------------------------------------------------------------------
@@ -435,14 +420,6 @@ void MarkBrowserFrame(HWND window) {
 bool Transparent_Hook(const void* host) {
     if (!g_active.load(std::memory_order_acquire)) {
         return g_origTransparent(host);
-    }
-    const HWND candidate = t_candidate;
-    if (candidate) {
-        t_candidate = nullptr;
-        if (GetTickCount64() - t_candidateTick < kCandidateMaxAgeMs &&
-            IsWindow(candidate)) {
-            MarkBrowserFrame(candidate);
-        }
     }
     return true;
 }
@@ -468,6 +445,9 @@ void FrameOnPaint_Hook(void* view, void* canvas) {
     }
     const bool incognito = IsIncognitoFrame(view);
     if (const HWND window = g_hwndForView ? g_hwndForView(view) : nullptr) {
+        if (!IsBrowserFrameWindow(window)) {
+            MarkBrowserFrame(window);
+        }
         if (incognito) {
             SetPropW(window, kIncognitoProperty, reinterpret_cast<HANDLE>(1));
         } else if (GetPropW(window, kIncognitoProperty)) {
@@ -714,7 +694,6 @@ std::atomic<bool> g_captionFixActive{false};
 std::atomic<bool> g_captionStopping{false};
 std::atomic<bool> g_captionPropertyUsed{false};
 bool g_captionHooksInstalled = false;
-decltype(&CreateWindowExW) g_origCreateWindowExW = nullptr;
 decltype(&GetWindowLongPtrW) g_origGetWindowLongPtrW = nullptr;
 decltype(&SetWindowLongPtrW) g_origSetWindowLongPtrW = nullptr;
 decltype(&GetWindowLongW) g_origGetWindowLongW = nullptr;
@@ -834,29 +813,32 @@ void ApplyNativeCaption(HWND window) {
     }
 }
 
-HWND WINAPI CreateWindowExW_Hook(DWORD exStyle,
-                                 LPCWSTR className,
-                                 LPCWSTR windowName,
-                                 DWORD style,
-                                 int x,
-                                 int y,
-                                 int width,
-                                 int height,
-                                 HWND parent,
-                                 HMENU menu,
-                                 HINSTANCE instance,
-                                 LPVOID param) {
-    const HWND window = g_origCreateWindowExW(exStyle, className, windowName, style, x,
-                                              y, width, height, parent, menu, instance,
-                                              param);
-    const DWORD error = GetLastError();
-    if (window && g_active.load(std::memory_order_acquire) &&
-        IsFrameCandidate(window, style)) {
-        t_candidate = window;
-        t_candidateTick = GetTickCount64();
+// Applies the caption fix on a thread-pool thread. SetWindowLong from another
+// thread reaches Chrome's UI thread as a sent message, which it handles back in
+// its message loop instead of in the middle of painting. Each pending callback
+// holds a reference to this module, so the mod can unload while one is queued.
+void CALLBACK NativeCaptionCallback(PTP_CALLBACK_INSTANCE instance, void* context) {
+    ApplyNativeCaption(static_cast<HWND>(context));
+    HMODULE self = nullptr;
+    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                               GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           reinterpret_cast<LPCWSTR>(&NativeCaptionCallback), &self)) {
+        FreeLibraryWhenCallbackReturns(instance, self);
     }
-    SetLastError(error);
-    return window;
+}
+
+void QueueNativeCaption(HWND window) {
+    if (!g_captionFixActive.load(std::memory_order_acquire)) {
+        return;
+    }
+    HMODULE self = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                            reinterpret_cast<LPCWSTR>(&NativeCaptionCallback), &self)) {
+        return;
+    }
+    if (!TrySubmitThreadpoolCallback(NativeCaptionCallback, window, nullptr)) {
+        FreeLibrary(self);
+    }
 }
 
 BOOL CALLBACK SyncCaptionWindow(HWND window, LPARAM) {
@@ -1165,8 +1147,6 @@ BOOL Wh_ModInit() {
         return FALSE;
     }
     g_captionHooksInstalled =
-        WindhawkUtils::SetFunctionHook(CreateWindowExW, CreateWindowExW_Hook,
-                                       &g_origCreateWindowExW) &&
         WindhawkUtils::SetFunctionHook(GetWindowLongPtrW, GetWindowLongPtrW_Hook,
                                        &g_origGetWindowLongPtrW) &&
         WindhawkUtils::SetFunctionHook(SetWindowLongPtrW, SetWindowLongPtrW_Hook,
