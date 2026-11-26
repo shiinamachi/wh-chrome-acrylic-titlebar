@@ -2,7 +2,7 @@
 // @id              chrome-acrylic-titlebar
 // @name            Chrome Acrylic Titlebar (prototype)
 // @description     Show the Windows Acrylic backdrop behind Chrome's tab strip
-// @version         0.3.0
+// @version         0.3.1
 // @author          sakuranight-win11
 // @license         MIT
 // @architecture    x86-64
@@ -52,7 +52,7 @@ Windhawk는 찾은 함수 위치를 캐시하므로, 그다음부터는 바로 �
 - 시제품입니다. Chrome 158.0.8127.37에서 함수 이름이 정확한지, 다른 함수와 합쳐지지 않았는지를
   PDB로 확인했습니다. 다른 버전에서 함수가 없어지면 모드는 아무것도 바꾸지 않습니다.
 - Acrylic은 Windows가 그리므로 색은 시스템 다크·라이트 테마를 따르고, 비활성 창에서는 단색이 됩니다.
-- **주소창 줄도 투명하게**를 켜도 활성 탭은 원래 색으로 그려집니다.
+- **주소창 줄도 투명하게**(기본 켬)를 켜도 주소 입력란과 활성 탭은 원래 색으로 그려집니다.
 - **겹치는 Windows 창 단추 숨기기**는 브라우저 창에서만 `WS_SYSMENU`를 빼므로 Alt+Space 메뉴 같은
   시스템 메뉴 동작이 달라질 수 있습니다. 창 스타일을 보는 도구(komorebi 등)의 동작도 확인해야 합니다.
 - 문제가 생기면 모드를 끄고 Chrome을 다시 시작하면 원래대로 돌아갑니다.
@@ -74,9 +74,9 @@ Windhawk는 찾은 함수 위치를 캐시하므로, 그다음부터는 바로 �
 - inactiveTabs: true
   $name: 비활성 탭 배경 지우기
   $description: 비활성 탭이 자기 배경을 칠하지 않게 해서 탭 뒤로도 배경 효과가 보이게 합니다. 활성 탭, 선택한 탭, 마우스를 올린 탭은 그대로 칠합니다. 새로 여는 창부터 적용됩니다.
-- toolbar: false
+- toolbar: true
   $name: 주소창 줄도 투명하게
-  $description: 주소창 줄과 북마크 바의 배경도 지웁니다. 활성 탭은 원래 색으로 남습니다.
+  $description: 주소창 줄과 북마크 바의 배경도 지웁니다. 주소 입력란과 활성 탭은 원래 색으로 남습니다. 바로 적용됩니다.
 - hideNativeCaptionButtons: true
   $name: 겹치는 Windows 창 단추 숨기기
   $description: 투명해진 탭 줄 아래에 Windows가 그리는 최소화·최대화·닫기 단추를 숨깁니다. WS_SYSMENU를 빼므로 Alt+Space 같은 시스템 메뉴 동작이 달라질 수 있습니다.
@@ -167,7 +167,7 @@ constexpr int kSkBlendModeClear = 0;
 // Settings.
 std::atomic<UINT> g_backdrop{kBackdropAcrylic};
 std::atomic<bool> g_inactiveTabs{true};
-std::atomic<bool> g_toolbar{false};
+std::atomic<bool> g_toolbar{true};
 std::atomic<bool> g_hideCaptions{true};
 std::atomic<bool> g_downloadSymbols{true};
 
