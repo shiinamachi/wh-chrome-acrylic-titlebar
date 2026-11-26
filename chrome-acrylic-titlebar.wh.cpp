@@ -1,9 +1,10 @@
 // ==WindhawkMod==
 // @id              chrome-acrylic-titlebar
-// @name            Chrome Acrylic Titlebar (prototype)
-// @description     Show the Windows Acrylic backdrop behind Chrome's tab strip
-// @version         0.3.1
-// @author          sakuranight-win11
+// @name            Chrome Acrylic Titlebar
+// @description     Show the Windows Acrylic backdrop behind Chrome's tab strip and toolbar
+// @version         0.1.0
+// @author          kentakang
+// @github          https://github.com/kentakang
 // @license         MIT
 // @architecture    x86-64
 // @include         chrome.exe
@@ -12,77 +13,85 @@
 
 // ==WindhawkModReadme==
 /*
-# Chrome Acrylic Titlebar (시제품)
+# Chrome Acrylic Titlebar
 
-Chrome 탭 줄(제목 표시줄) 뒤를 비워서 Windows가 그리는 Acrylic 배경이 보이게 합니다.
-웹 페이지 영역은 건드리지 않습니다.
+Makes Google Chrome's tab strip and toolbar transparent, so the Windows 11
+Acrylic backdrop shows through. Web page content is not changed.
 
-## 동작 방식
+## How it works
 
-Chrome 158은 창에 Mica 배경을 지정하지만 탭 줄을 프레임 색으로 불투명하게 칠해서 가립니다.
-이 모드는 Chrome 내부 함수 두 개를 후킹합니다.
+Chrome asks Windows for a Mica backdrop but paints its frame opaque on top of
+it. The mod hooks a few functions in `chrome.dll`:
 
-- `BrowserDesktopWindowTreeHostWin::ShouldWindowContentsBeTransparent`: `true`를 돌려줘서
-  Chrome이 투명 배경으로 화면을 출력하게 합니다.
-- `BrowserFrameViewWin::OnPaint`: 제목 표시줄 칠하기를 건너뜁니다.
+- `BrowserDesktopWindowTreeHostWin::ShouldWindowContentsBeTransparent` returns
+  `true`, so Chrome composites its window with a transparent background.
+- `BrowserFrameViewWin::OnPaint` skips painting the titlebar.
+- `BrowserTabStripController::InitFromModel` marks each tab strip as a glass
+  frame with `TabStrip::SetIsGlassFrame(true)`, so inactive tabs don't fill
+  their background. On macOS Chrome does this itself; on Windows nothing does.
+- `views::View::OnPaintBackground` clears the toolbar and bookmarks bar
+  backgrounds (optional).
 
-비활성 탭은 각자 배경을 칠합니다. Chrome에는 macOS용 "유리 프레임" 탭 줄이 있어서, 탭 줄이 유리
-상태이면 비활성 탭을 칠하지 않습니다. Windows에서는 이 상태를 켜 주는 `GlassFrameService`가 만들어지지
-않으므로, 창마다 탭 줄을 초기화하는 `BrowserTabStripController::InitFromModel` 직후에
-`TabStrip::SetIsGlassFrame(true)`를 부릅니다. 새 `TabView` 탭 경로에 대비해
-`TabStyleViewDelegateImpl::ShouldPaintTabBackgroundColor`도 `false`를 돌려주게 합니다.
+The backdrop Chrome requests (`DWMSBT_MAINWINDOW`) is replaced with the one
+chosen in the settings, Acrylic by default.
 
-그리고 Chrome이 지정하는 Mica(`DWMSBT_MAINWINDOW`)를 Acrylic(`DWMSBT_TRANSIENTWINDOW`)으로 바꿉니다.
+## First run and Chrome updates
 
-## 처음 실행할 때와 Chrome을 업데이트한 뒤
+The mod needs the symbols (PDB) of the installed `chrome.dll`. Windhawk
+downloads them from Google's symbol server. For Chrome 158 the download is
+about 1.1 GB compressed and about 5.8 GB on disk.
 
-내부 함수 위치를 찾으려면 지금 설치된 `chrome.dll`의 PDB가 필요합니다. Windhawk가 Google 심볼 서버에서
-받습니다. Chrome 158 기준으로 압축 약 1.1 GB, 풀면 약 5.8 GB입니다.
+1. Enable the mod and start Chrome. While the symbols download, Chrome starts
+   normally without the effect.
+2. Wait a few minutes until the download finishes. With logging enabled, the
+   mod logs `Symbols are ready`.
+3. Fully exit Chrome, including any background instance, and start it again.
 
-1. 모드를 켜고 Chrome을 실행합니다. 심볼을 받는 동안 Chrome은 효과 없이 평소처럼 뜹니다.
-2. 다운로드가 끝날 때까지 몇 분 기다립니다. 모드 로그에 `Symbols are ready`가 찍힙니다.
-3. Chrome을 완전히 종료(백그라운드 실행 포함)하고 다시 실행합니다.
+Windhawk caches the function addresses, so later starts apply the effect
+immediately. A Chrome update replaces `chrome.dll`, so the steps repeat after
+each update. Without a cache hit, Chrome waits up to 4 seconds at startup.
+Downloaded PDBs stay in `C:\ProgramData\Windhawk\Engine\Symbols`; old versions
+can be deleted.
 
-Windhawk는 찾은 함수 위치를 캐시하므로, 그다음부터는 바로 적용됩니다. Chrome이 업데이트되면
-`chrome.dll`이 바뀌므로 위 과정을 반복합니다. 캐시가 없을 때는 Chrome 시작이 최대 4초 늦어집니다.
-받은 PDB는 `C:\ProgramData\Windhawk\Engine\Symbols`에 버전마다 쌓이니 지난 버전은 지워도 됩니다.
+## Notes
 
-## 한계
+- Tested with Chrome 158.0.8127.37 (x64). If a hooked function is missing in
+  another version, the mod leaves Chrome unchanged.
+- Windows draws the Acrylic backdrop, so its tint follows the system light or
+  dark theme, and it turns solid while the window is inactive.
+- The address field and the active tab keep their own background colors.
+- **Hide duplicate Windows caption buttons** removes `WS_SYSMENU` from browser
+  windows. This can change the Alt+Space menu and tools that inspect window
+  styles.
+- To undo everything, disable the mod and restart Chrome.
 
-- 시제품입니다. Chrome 158.0.8127.37에서 함수 이름이 정확한지, 다른 함수와 합쳐지지 않았는지를
-  PDB로 확인했습니다. 다른 버전에서 함수가 없어지면 모드는 아무것도 바꾸지 않습니다.
-- Acrylic은 Windows가 그리므로 색은 시스템 다크·라이트 테마를 따르고, 비활성 창에서는 단색이 됩니다.
-- **주소창 줄도 투명하게**(기본 켬)를 켜도 주소 입력란과 활성 탭은 원래 색으로 그려집니다.
-- **겹치는 Windows 창 단추 숨기기**는 브라우저 창에서만 `WS_SYSMENU`를 빼므로 Alt+Space 메뉴 같은
-  시스템 메뉴 동작이 달라질 수 있습니다. 창 스타일을 보는 도구(komorebi 등)의 동작도 확인해야 합니다.
-- 문제가 생기면 모드를 끄고 Chrome을 다시 시작하면 원래대로 돌아갑니다.
-
-창 단추 숨기기와 심볼을 비동기로 찾는 방식은
-[Brave Acrylic](https://github.com/bardelyne/brave-acrylic) (MIT, bardelyne)을 참고했습니다.
+Hiding the duplicate caption buttons and the asynchronous symbol lookup are
+adapted from [Brave Acrylic](https://windhawk.net/mods/brave-acrylic) by
+bardelyne (MIT).
 */
 // ==/WindhawkModReadme==
 
 // ==WindhawkModSettings==
 /*
 - backdrop: acrylic
-  $name: 배경 효과
-  $description: 탭 줄 뒤에 보일 Windows 배경 효과입니다. 새로 여는 창부터 적용됩니다.
+  $name: Backdrop
+  $description: The Windows backdrop shown behind the tab strip. Applies to new windows.
   $options:
   - acrylic: Acrylic
   - tabbed: Mica Alt
   - mica: Mica
 - inactiveTabs: true
-  $name: 비활성 탭 배경 지우기
-  $description: 비활성 탭이 자기 배경을 칠하지 않게 해서 탭 뒤로도 배경 효과가 보이게 합니다. 활성 탭, 선택한 탭, 마우스를 올린 탭은 그대로 칠합니다. 새로 여는 창부터 적용됩니다.
+  $name: Transparent inactive tabs
+  $description: Inactive tabs don't fill their background, so the backdrop shows behind them. Active, selected and hovered tabs are still painted. Applies to new windows.
 - toolbar: true
-  $name: 주소창 줄도 투명하게
-  $description: 주소창 줄과 북마크 바의 배경도 지웁니다. 주소 입력란과 활성 탭은 원래 색으로 남습니다. 바로 적용됩니다.
+  $name: Transparent toolbar
+  $description: Also clear the toolbar and bookmarks bar backgrounds. The address field and the active tab keep their colors. Applies immediately.
 - hideNativeCaptionButtons: true
-  $name: 겹치는 Windows 창 단추 숨기기
-  $description: 투명해진 탭 줄 아래에 Windows가 그리는 최소화·최대화·닫기 단추를 숨깁니다. WS_SYSMENU를 빼므로 Alt+Space 같은 시스템 메뉴 동작이 달라질 수 있습니다.
+  $name: Hide duplicate Windows caption buttons
+  $description: Hide the minimize, maximize and close buttons that Windows draws under the transparent tab strip. This removes WS_SYSMENU from browser windows, which can change the Alt+Space menu.
 - downloadSymbols: true
-  $name: Google 심볼 서버에서 심볼 받기
-  $description: 캐시에 없을 때 chrome.dll의 PDB를 Google 심볼 서버에서 받습니다(압축 약 1.1 GB, 풀면 약 5.8 GB). 끄면 이미 받아 둔 심볼만 씁니다. Chrome을 다시 시작해야 적용됩니다.
+  $name: Download symbols from Google
+  $description: When the symbols aren't cached, download the chrome.dll PDB from Google's symbol server (about 1.1 GB compressed, 5.8 GB on disk). When off, only symbols already on disk are used. Restart Chrome to apply.
 */
 // ==/WindhawkModSettings==
 
@@ -551,17 +560,17 @@ struct {
 
 bool ResolveAddresses(HMODULE module, void** result) {
     void* address[kSlotCount]{};
-    WindhawkUtils::SYMBOL_HOOK hooks[kSlotCount];
+    WindhawkUtils::SYMBOL_HOOK chromeDllHooks[kSlotCount];
     for (unsigned i = 0; i < kSlotCount; ++i) {
-        hooks[i] = {{kSymbols[i]}, &address[i], nullptr, true};
+        chromeDllHooks[i] = {{kSymbols[i]}, &address[i], nullptr, true};
     }
     WH_HOOK_SYMBOLS_OPTIONS options{};
     options.optionsSize = sizeof(options);
     options.symbolServer = g_downloadSymbols.load() ? kChromeSymbolServer : L"";
-    // The full Chrome PDB is huge; match decorated names only.
+    // The Chrome PDB is about 5.8 GB with millions of symbols. Undecorating all
+    // of them is very slow, so match the decorated names only.
     options.noUndecoratedSymbols = TRUE;
-    options.onlineCacheUrl = L"";
-    if (!WindhawkUtils::HookSymbols(module, hooks, kSlotCount, &options)) {
+    if (!WindhawkUtils::HookSymbols(module, chromeDllHooks, kSlotCount, &options)) {
         return false;
     }
     std::memcpy(result, address, sizeof(address));
