@@ -30,7 +30,9 @@ it. The mod hooks a few functions in `chrome.dll`:
   frame with `TabStrip::SetIsGlassFrame(true)`, so inactive tabs don't fill
   their background. On macOS Chrome does this itself; on Windows nothing does.
 - `views::View::OnPaintBackground` clears the toolbar and bookmarks bar
-  backgrounds (optional).
+  backgrounds (optional). With **Translucent controls** it also skips the
+  backgrounds of the address field's text and site info icon, so they sit on
+  the field's own background, and hides the toolbar divider.
 - `ui::ColorProvider::GetColor` makes the address field translucent, clears
   the tab search and new tab button backgrounds (hover feedback stays), and in
   a dark theme turns the active tab into a light translucent highlight. The
@@ -38,7 +40,7 @@ it. The mod hooks a few functions in `chrome.dll`:
   (`ChromeColorIdName`), so they follow Chrome updates.
 - `HorizontalTabStyleViews::GetPath` gives the active tab the rounded hover
   shape instead of the file-folder shape that joins the toolbar.
-- `TabStyle::GetContrastRatioValues` fades the separators between tabs.
+- `TabStyle::GetContrastRatioValues` hides the separators between tabs.
 
 The backdrop Chrome requests (`DWMSBT_MAINWINDOW`) is replaced with the one
 chosen in the settings, Acrylic by default.
@@ -97,7 +99,7 @@ bardelyne (MIT).
   $description: Also clear the toolbar and bookmarks bar backgrounds. Applies immediately.
 - translucentControls: true
   $name: Translucent controls
-  $description: Make the address field translucent, draw the active tab as a light rounded highlight, fade the separators between tabs, and show the tab search and new tab button backgrounds only on hover. The focused address field stays opaque to match its suggestions. Restart Chrome to apply.
+  $description: Make the address field translucent, draw the active tab as a light rounded highlight, hide the separators between tabs and the toolbar divider, and show the tab search and new tab button backgrounds only on hover. The focused address field stays opaque to match its suggestions. Restart Chrome to apply.
 - hideNativeCaptionButtons: true
   $name: Hide duplicate Windows caption buttons
   $description: Hide the minimize, maximize and close buttons that Windows draws under the transparent tab strip. This removes WS_SYSMENU from browser windows, which can change the Alt+Space menu.
@@ -246,7 +248,7 @@ GetContrastRatioValues_t g_origGetContrastRatioValues = nullptr;
 // std::tuple<float, float, float, SkColor>: the separator color follows the
 // three floats.
 constexpr size_t kSeparatorColorOffset = 3 * sizeof(float);
-constexpr unsigned kSeparatorAlpha = 0x4D;
+constexpr unsigned kSeparatorAlpha = 0;
 
 // Chrome colors to restyle, resolved by name at startup.
 // kScaleAlpha keeps the RGB, so the light or dark theme still applies, and
@@ -371,7 +373,7 @@ void FrameOnPaint_Hook(void* view, void* canvas) {
     g_origFrameOnPaint(view, canvas);
 }
 
-enum class ViewRole { kOther, kToolbarRow, kOmniboxText };
+enum class ViewRole { kOther, kToolbarRow, kOmniboxText, kOmniboxIcon, kToolbarDivider };
 
 ViewRole GetViewRole(void* view) {
     NativeClassName name{};
@@ -385,6 +387,12 @@ ViewRole GetViewRole(void* view) {
     }
     if (cls == "OmniboxViewViews") {
         return ViewRole::kOmniboxText;
+    }
+    if (cls == "LocationIconView") {
+        return ViewRole::kOmniboxIcon;
+    }
+    if (cls == "ToolbarDivider") {
+        return ViewRole::kToolbarDivider;
     }
     return ViewRole::kOther;
 }
@@ -402,9 +410,13 @@ void OnPaintBackground_Hook(void* view, void* canvas) {
             g_drawColor(canvas, 0, kSkBlendModeClear);
             return;
         }
-        if (controls && role == ViewRole::kOmniboxText) {
-            // The location bar already paints the same color behind its text
-            // field. Painting a translucent color twice would darken the field.
+        if (controls && (role == ViewRole::kOmniboxText || role == ViewRole::kOmniboxIcon)) {
+            // The location bar already paints its translucent background behind
+            // these. Painting another background on top would stand out. The
+            // icon's hover feedback is an ink drop and still shows.
+            return;
+        }
+        if (controls && role == ViewRole::kToolbarDivider) {
             return;
         }
     }
