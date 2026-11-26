@@ -2,7 +2,7 @@
 // @id              chrome-acrylic-titlebar
 // @name            Chrome Acrylic Titlebar (prototype)
 // @description     Show the Windows Acrylic backdrop behind Chrome's tab strip
-// @version         0.2.1
+// @version         0.2.2
 // @author          sakuranight-win11
 // @license         MIT
 // @architecture    x86-64
@@ -26,8 +26,8 @@ Chrome 158은 창에 Mica 배경을 지정하지만 탭 줄을 프레임 색으�
   Chrome이 투명 배경으로 화면을 출력하게 합니다.
 - `BrowserFrameViewWin::OnPaint`: 제목 표시줄 칠하기를 건너뜁니다.
 
-비활성 탭은 각자 배경을 칠하므로, 탭(`TabView`)이 테마 속성
-`SHOULD_FILL_BACKGROUND_TAB_COLOR`를 읽을 때 0을 돌려줘서 칠하지 않게 합니다.
+비활성 탭은 각자 배경을 칠하므로, 탭(`TabView`)의 스타일 위임 객체가 비활성 탭 배경을 칠할지
+물을 때(`TabStyleViewDelegateImpl::ShouldPaintTabBackgroundColor`) `false`를 돌려줍니다.
 
 그리고 Chrome이 지정하는 Mica(`DWMSBT_MAINWINDOW`)를 Acrylic(`DWMSBT_TRANSIENTWINDOW`)으로 바꿉니다.
 
@@ -70,7 +70,7 @@ Windhawk는 찾은 함수 위치를 캐시하므로, 그다음부터는 바로 �
   - mica: Mica
 - inactiveTabs: true
   $name: 비활성 탭 배경 지우기
-  $description: 비활성 탭이 자기 배경을 칠하지 않게 해서 탭 뒤로도 배경 효과가 보이게 합니다. 활성 탭, 선택한 탭, 마우스를 올린 탭은 그대로 칠합니다. Chrome을 다시 시작해야 적용됩니다.
+  $description: 비활성 탭이 자기 배경을 칠하지 않게 해서 탭 뒤로도 배경 효과가 보이게 합니다. 활성 탭, 선택한 탭, 마우스를 올린 탭은 그대로 칠합니다.
 - toolbar: false
   $name: 주소창 줄도 투명하게
   $description: 주소창 줄과 북마크 바의 배경도 지웁니다. 활성 탭은 원래 색으로 남습니다.
@@ -114,7 +114,7 @@ enum Slot : unsigned {
     kOnPaintBackground,
     kGetClassName,
     kDrawColor,
-    kGetDisplayProperty,
+    kShouldPaintTabBackground,
     kSlotCount,
 };
 constexpr std::wstring_view kSymbols[kSlotCount] = {
@@ -128,15 +128,13 @@ constexpr std::wstring_view kSymbols[kSlotCount] = {
     L"?GetClassNameW@View@views@@QEBA?AV?$basic_string_view@DU?$char_traits@D@__Cr@std@@@__Cr@std@@XZ",
     // public: void gfx::Canvas::DrawColor(SkColor, SkBlendMode)
     L"?DrawColor@Canvas@gfx@@QEAAXIW4SkBlendMode@@@Z",
-    // public: virtual int ThemeService::BrowserThemeProvider::GetDisplayProperty(int) const
-    L"?GetDisplayProperty@BrowserThemeProvider@ThemeService@@UEBAHH@Z",
+    // public: virtual bool TabStyleViewDelegateImpl::ShouldPaintTabBackgroundColor() const
+    // (tabs/common/tab_view.cc, the delegate of the TabView that draws tabs).
+    // HorizontalTabStyleViews asks it only for inactive, unselected tabs:
+    // active and selected tabs are painted before it is asked, and the hover
+    // highlight is painted separately.
+    L"?ShouldPaintTabBackgroundColor@TabStyleViewDelegateImpl@@UEBA_NXZ",
 };
-
-// ThemeProperties::SHOULD_FILL_BACKGROUND_TAB_COLOR in Chrome 158. Tabs
-// (TabView::UpdateColors, and the older Tab::OnThemeChanged) read it; when it
-// is 0, inactive tabs skip their background fill while active, selected and
-// hovered tabs still paint. The property only controls this tab fill.
-constexpr int kShouldFillBackgroundTabColor = 1032;
 
 // Native x64 ABI shapes. A member function returning std::string_view writes
 // it through a hidden pointer passed after `this`.
@@ -148,7 +146,7 @@ using Transparent_t = bool (*)(const void* host);
 using Paint_t = void (*)(void* view, void* canvas);
 using GetClassName_t = NativeClassName* (*)(const void* view, NativeClassName* out);
 using DrawColor_t = void (*)(void* canvas, unsigned int color, int mode);
-using DisplayProperty_t = int (*)(const void* provider, int id);
+using TabFill_t = bool (*)(const void* delegate);
 constexpr int kSkBlendModeClear = 0;
 
 // Settings.
@@ -169,7 +167,7 @@ Paint_t g_origFrameOnPaint = nullptr;
 Paint_t g_origOnPaintBackground = nullptr;
 GetClassName_t g_getClassName = nullptr;
 DrawColor_t g_drawColor = nullptr;
-DisplayProperty_t g_origGetDisplayProperty = nullptr;
+TabFill_t g_origShouldPaintTabBackground = nullptr;
 
 decltype(&DwmSetWindowAttribute) g_origDwmSetWindowAttribute = nullptr;
 decltype(&LoadLibraryExW) g_origLoadLibraryExW = nullptr;
@@ -285,13 +283,12 @@ void OnPaintBackground_Hook(void* view, void* canvas) {
     g_origOnPaintBackground(view, canvas);
 }
 
-int GetDisplayProperty_Hook(const void* provider, int id) {
-    if (id == kShouldFillBackgroundTabColor &&
-        g_inactiveTabs.load(std::memory_order_relaxed) &&
+bool ShouldPaintTabBackground_Hook(const void* delegate) {
+    if (g_inactiveTabs.load(std::memory_order_relaxed) &&
         g_active.load(std::memory_order_acquire)) {
-        return 0;
+        return false;
     }
-    return g_origGetDisplayProperty(provider, id);
+    return g_origShouldPaintTabBackground(delegate);
 }
 
 // ---------------------------------------------------------------------------
@@ -590,10 +587,10 @@ bool InstallChromeHooks() {
             reinterpret_cast<Paint_t>(address[kOnPaintBackground]),
             OnPaintBackground_Hook, &g_origOnPaintBackground));
     }
-    if (address[kGetDisplayProperty] &&
+    if (address[kShouldPaintTabBackground] &&
         !WindhawkUtils::SetFunctionHook(
-            reinterpret_cast<DisplayProperty_t>(address[kGetDisplayProperty]),
-            GetDisplayProperty_Hook, &g_origGetDisplayProperty)) {
+            reinterpret_cast<TabFill_t>(address[kShouldPaintTabBackground]),
+            ShouldPaintTabBackground_Hook, &g_origShouldPaintTabBackground)) {
         Wh_Log(L"Inactive tab background hook unavailable");
     }
     return true;
