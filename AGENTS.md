@@ -97,7 +97,7 @@ docs: update installation guide
   - `@author`는 표시 이름이라 `shiinamachi`를 씁니다.
   - `@github`는 PR을 여는 사용자 계정인 `https://github.com/kentakang`으로 둡니다. `shiinamachi`는 조직 계정이라 PR 작성자가 될 수 없어서, `@github`를 조직으로 바꾸면 상류 검사가 항상 실패합니다.
   - 상류에 한 번 등록되면 두 값 모두 바꿀 수 없으니 임의로 바꾸지 않습니다.
-  - `@homepage`는 이 저장소(`https://github.com/shiinamachi/wh-chrome-acrylic-titlebar`)입니다.
+  - `@homepage`는 `https://github.com/shiinamachi`(조직 프로필)입니다.
 
 ### 릴리즈 요청을 받았을 때
 
