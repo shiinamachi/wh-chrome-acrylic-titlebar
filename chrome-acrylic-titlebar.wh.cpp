@@ -31,8 +31,8 @@ it. The mod hooks a few functions in `chrome.dll`:
 - `BrowserTabStripController::InitFromModel` marks each tab strip as a glass
   frame with `TabStrip::SetIsGlassFrame(true)`, so inactive tabs don't fill
   their background. On macOS Chrome does this itself; on Windows nothing does.
-- `views::View::OnPaintBackground` skips the toolbar and bookmarks bar
-  backgrounds (optional). With **Translucent controls** it also skips the
+- `views::View::OnPaintBackground` clears the toolbar and bookmarks bar
+  backgrounds (optional), and paints the incognito tint there again. With **Translucent controls** it also skips the
   backgrounds of the address field's text and site info icon, so they sit on
   the field's own background, and hides the toolbar divider.
 - `ui::ColorProvider::GetColor` makes the address field translucent, clears
@@ -161,6 +161,7 @@ enum Slot : unsigned {
     kGetBrowserView,
     kGetProfile,
     kIsIncognitoProfile,
+    kHwndForView,
     kSlotCount,
 };
 constexpr std::wstring_view kSymbols[kSlotCount] = {
@@ -211,6 +212,8 @@ constexpr std::wstring_view kSymbols[kSlotCount] = {
     L"?GetProfile@BrowserView@@QEBAPEAVProfile@@XZ",
     // public: bool Profile::IsIncognitoProfile() const
     L"?IsIncognitoProfile@Profile@@QEBA_NXZ",
+    // HWND views::HWNDForView(const views::View*)
+    L"?HWNDForView@views@@YAPEAUHWND__@@PEBVView@1@@Z",
 };
 
 // TabStyle::PathType. kActiveTab is only used for the active tab's fill;
@@ -238,8 +241,10 @@ using GetTabPath_t = void* (*)(const void* style, void* path, int type, float sc
 using PaintTab_t = void (*)(const void* style, void* canvas);
 using GetPointer_t = void* (*)(const void* self);
 using IsIncognitoProfile_t = bool (*)(const void* profile);
+using HwndForView_t = HWND (*)(const void* view);
 using DrawRoundRect_t = void (*)(void* canvas, const void* rect, float radius,
                                  const void* flags);
+constexpr int kSkBlendModeClear = 0;
 constexpr int kSkBlendModeSrcOver = 3;
 // ARGB, painted over the backdrop of incognito windows.
 constexpr unsigned int kIncognitoTint = 0x80181A1C;
@@ -274,6 +279,7 @@ DrawRoundRect_t g_origDrawRoundRect = nullptr;
 GetPointer_t g_getBrowserView = nullptr;
 GetPointer_t g_getProfile = nullptr;
 IsIncognitoProfile_t g_isIncognitoProfile = nullptr;
+HwndForView_t g_hwndForView = nullptr;
 thread_local unsigned t_tabPaintDepth = 0;
 
 // Chrome colors to restyle, resolved by name at startup.
@@ -340,6 +346,9 @@ void LoadSettings() {
 // manager and other Chrome windows keep their native frame untouched.
 
 constexpr wchar_t kBrowserFrameProperty[] = L"Windhawk.ChromeAcrylicTitlebar.Frame";
+// Set on incognito browser windows when their frame paints, so views painted
+// later (the toolbar) can repaint the tint after clearing their background.
+constexpr wchar_t kIncognitoProperty[] = L"Windhawk.ChromeAcrylicTitlebar.Incognito";
 constexpr ULONGLONG kCandidateMaxAgeMs = 2000;
 thread_local HWND t_candidate = nullptr;
 thread_local ULONGLONG t_candidateTick = 0;
@@ -401,15 +410,28 @@ bool IsIncognitoFrame(const void* frameView) {
     return profile && g_isIncognitoProfile(profile);
 }
 
+bool IsIncognitoWindowOf(const void* view) {
+    const HWND window = g_hwndForView ? g_hwndForView(view) : nullptr;
+    return window && GetPropW(window, kIncognitoProperty);
+}
+
 void FrameOnPaint_Hook(void* view, void* canvas) {
     if (!g_active.load(std::memory_order_acquire)) {
         g_origFrameOnPaint(view, canvas);
         return;
     }
+    const bool incognito = IsIncognitoFrame(view);
+    if (const HWND window = g_hwndForView ? g_hwndForView(view) : nullptr) {
+        if (incognito) {
+            SetPropW(window, kIncognitoProperty, reinterpret_cast<HANDLE>(1));
+        } else if (GetPropW(window, kIncognitoProperty)) {
+            RemovePropW(window, kIncognitoProperty);
+        }
+    }
     // Leave the titlebar unpainted so the DWM backdrop shows through. Child
     // views (tabs, caption buttons, toolbar) paint afterwards as usual.
-    if (canvas && g_drawColor && g_incognitoTint.load(std::memory_order_relaxed) &&
-        IsIncognitoFrame(view)) {
+    if (canvas && g_drawColor && incognito &&
+        g_incognitoTint.load(std::memory_order_relaxed)) {
         g_drawColor(canvas, kIncognitoTint, kSkBlendModeSrcOver);
     }
 }
@@ -447,8 +469,14 @@ void OnPaintBackground_Hook(void* view, void* canvas) {
         g_active.load(std::memory_order_acquire)) {
         const ViewRole role = GetViewRole(view);
         if (toolbar && role == ViewRole::kToolbarRow) {
-            // Nothing else paints under the toolbar, so skipping its background
-            // reveals the backdrop, or the frame's incognito tint.
+            // The canvas is clipped to this view; clear it to reveal the
+            // backdrop. Chrome paints an opaque layer under the toolbar too, so
+            // skipping the background alone isn't enough. Clearing also removes
+            // the frame's incognito tint, so paint it again.
+            g_drawColor(canvas, 0, kSkBlendModeClear);
+            if (g_incognitoTint.load(std::memory_order_relaxed) && IsIncognitoWindowOf(view)) {
+                g_drawColor(canvas, kIncognitoTint, kSkBlendModeSrcOver);
+            }
             return;
         }
         if (controls && (role == ViewRole::kOmniboxText || role == ViewRole::kOmniboxIcon)) {
@@ -803,6 +831,7 @@ BOOL CALLBACK ForgetBrowserFrame(HWND window, LPARAM) {
     GetWindowThreadProcessId(window, &process);
     if (process == GetCurrentProcessId()) {
         RemovePropW(window, kBrowserFrameProperty);
+        RemovePropW(window, kIncognitoProperty);
     }
     return TRUE;
 }
@@ -937,6 +966,7 @@ bool InstallChromeHooks() {
                 g_getProfile = reinterpret_cast<GetPointer_t>(address[kGetProfile]);
                 g_isIncognitoProfile =
                     reinterpret_cast<IsIncognitoProfile_t>(address[kIsIncognitoProfile]);
+                g_hwndForView = reinterpret_cast<HwndForView_t>(address[kHwndForView]);
             }
             if (address[kPaintTab] && address[kDrawRoundRect] &&
                 (!WindhawkUtils::SetFunctionHook(
