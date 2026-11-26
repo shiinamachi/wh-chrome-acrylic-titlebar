@@ -31,6 +31,11 @@ it. The mod hooks a few functions in `chrome.dll`:
   their background. On macOS Chrome does this itself; on Windows nothing does.
 - `views::View::OnPaintBackground` clears the toolbar and bookmarks bar
   backgrounds (optional).
+- `ui::ColorProvider::GetColor` lowers the alpha of a few colors: the address
+  field, the active tab, and the tab search and new tab button backgrounds.
+  The RGB stays the same, so the light or dark theme and Chrome's contrast
+  calculations still apply. The color ids are looked up by name in Chrome's
+  own id table (`ChromeColorIdName`), so they follow Chrome updates.
 
 The backdrop Chrome requests (`DWMSBT_MAINWINDOW`) is replaced with the one
 chosen in the settings, Acrylic by default.
@@ -59,7 +64,8 @@ can be deleted.
   another version, the mod leaves Chrome unchanged.
 - Windows draws the Acrylic backdrop, so its tint follows the system light or
   dark theme, and it turns solid while the window is inactive.
-- The address field and the active tab keep their own background colors.
+- With **Translucent controls**, the focused address field stays opaque so it
+  matches the suggestion list below it.
 - **Hide duplicate Windows caption buttons** removes `WS_SYSMENU` from browser
   windows. This can change the Alt+Space menu and tools that inspect window
   styles.
@@ -85,7 +91,10 @@ bardelyne (MIT).
   $description: Inactive tabs don't fill their background, so the backdrop shows behind them. Active, selected and hovered tabs are still painted. Applies to new windows.
 - toolbar: true
   $name: Transparent toolbar
-  $description: Also clear the toolbar and bookmarks bar backgrounds. The address field and the active tab keep their colors. Applies immediately.
+  $description: Also clear the toolbar and bookmarks bar backgrounds. Applies immediately.
+- translucentControls: true
+  $name: Translucent controls
+  $description: Make the address field and the active tab translucent, and show the tab search and new tab button backgrounds only on hover. The focused address field stays opaque to match its suggestions. Restart Chrome to apply.
 - hideNativeCaptionButtons: true
   $name: Hide duplicate Windows caption buttons
   $description: Hide the minimize, maximize and close buttons that Windows draws under the transparent tab strip. This removes WS_SYSMENU from browser windows, which can change the Alt+Space menu.
@@ -99,7 +108,10 @@ bardelyne (MIT).
 #include <dwmapi.h>
 #include <shellapi.h>
 
+#include <algorithm>
 #include <atomic>
+#include <climits>
+#include <cstdint>
 #include <cstring>
 #include <cwchar>
 #include <string_view>
@@ -129,6 +141,8 @@ enum Slot : unsigned {
     kShouldPaintTabBackground,
     kInitFromModel,
     kSetIsGlassFrame,
+    kGetColor,
+    kChromeColorIdName,
     kSlotCount,
 };
 constexpr std::wstring_view kSymbols[kSlotCount] = {
@@ -156,6 +170,12 @@ constexpr std::wstring_view kSymbols[kSlotCount] = {
     // Normally driven by GlassFrameService, which Windows builds never create.
     // A glass tab strip leaves inactive tabs unfilled (TabStrip::IsGlassFrame).
     L"?SetIsGlassFrame@TabStrip@@QEAAX_N@Z",
+    // public: SkColor ui::ColorProvider::GetColor(ui::ColorId) const
+    L"?GetColor@ColorProvider@ui@@QEBAIH@Z",
+    // std::string ChromeColorIdName(ui::ColorId)
+    // Not called: only its sorted {ColorId, name} table is read (see
+    // ResolveColorIds), because it reports an error for unknown ids.
+    L"?ChromeColorIdName@@YA?AV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@H@Z",
 };
 
 // Native x64 ABI shapes. A member function returning std::string_view writes
@@ -171,12 +191,14 @@ using DrawColor_t = void (*)(void* canvas, unsigned int color, int mode);
 using TabFill_t = bool (*)(const void* delegate);
 using InitFromModel_t = void (*)(void* controller, void* tabStrip);
 using SetIsGlassFrame_t = void (*)(void* tabStrip, bool isGlass);
+using GetColor_t = unsigned int (*)(const void* provider, int id);
 constexpr int kSkBlendModeClear = 0;
 
 // Settings.
 std::atomic<UINT> g_backdrop{kBackdropAcrylic};
 std::atomic<bool> g_inactiveTabs{true};
 std::atomic<bool> g_toolbar{true};
+std::atomic<bool> g_translucentControls{true};
 std::atomic<bool> g_hideCaptions{true};
 std::atomic<bool> g_downloadSymbols{true};
 
@@ -194,6 +216,29 @@ DrawColor_t g_drawColor = nullptr;
 TabFill_t g_origShouldPaintTabBackground = nullptr;
 InitFromModel_t g_origInitFromModel = nullptr;
 SetIsGlassFrame_t g_setIsGlassFrame = nullptr;
+GetColor_t g_origGetColor = nullptr;
+
+// Chrome colors made translucent. The RGB is kept, so the light or dark theme
+// and Chrome's contrast calculations still apply; only the alpha is scaled.
+// The ids are resolved by name at startup.
+struct ColorOverride {
+    const char* name;
+    unsigned alpha;
+    int id;
+};
+ColorOverride g_colorOverrides[] = {
+    {"kColorLocationBarBackground", 0x80, -1},
+    {"kColorLocationBarBackgroundHovered", 0xA0, -1},
+    {"kColorTabBackgroundActiveFrameActive", 0x99, -1},
+    {"kColorTabBackgroundActiveFrameInactive", 0x99, -1},
+    // Hover feedback stays: it is drawn by the button's ink drop.
+    {"kColorNewTabButtonBackgroundFrameActive", 0, -1},
+    {"kColorNewTabButtonBackgroundFrameInactive", 0, -1},
+    {"kColorTabSearchButtonBackground", 0, -1},
+};
+int g_colorMin = 0;
+int g_colorMax = -1;
+std::atomic<bool> g_colorsReady{false};
 
 decltype(&DwmSetWindowAttribute) g_origDwmSetWindowAttribute = nullptr;
 decltype(&LoadLibraryExW) g_origLoadLibraryExW = nullptr;
@@ -213,6 +258,7 @@ void LoadSettings() {
     g_backdrop.store(type);
     g_inactiveTabs.store(Wh_GetIntSetting(L"inactiveTabs") != 0);
     g_toolbar.store(Wh_GetIntSetting(L"toolbar") != 0);
+    g_translucentControls.store(Wh_GetIntSetting(L"translucentControls") != 0);
     g_hideCaptions.store(Wh_GetIntSetting(L"hideNativeCaptionButtons") != 0);
     g_downloadSymbols.store(Wh_GetIntSetting(L"downloadSymbols") != 0);
 }
@@ -288,25 +334,137 @@ void FrameOnPaint_Hook(void* view, void* canvas) {
     g_origFrameOnPaint(view, canvas);
 }
 
-bool IsToolbarRow(void* view) {
+enum class ViewRole { kOther, kToolbarRow, kOmniboxText };
+
+ViewRole GetViewRole(void* view) {
     NativeClassName name{};
     g_getClassName(view, &name);
     if (!name.data || name.size == 0 || name.size > 64) {
-        return false;
+        return ViewRole::kOther;
     }
     const std::string_view cls(name.data, name.size);
-    return cls == "ToolbarView" || cls == "BookmarkBarView";
+    if (cls == "ToolbarView" || cls == "BookmarkBarView") {
+        return ViewRole::kToolbarRow;
+    }
+    if (cls == "OmniboxViewViews") {
+        return ViewRole::kOmniboxText;
+    }
+    return ViewRole::kOther;
 }
 
 void OnPaintBackground_Hook(void* view, void* canvas) {
-    if (view && canvas && g_toolbar.load(std::memory_order_relaxed) &&
+    const bool toolbar = g_toolbar.load(std::memory_order_relaxed);
+    const bool controls = g_colorsReady.load(std::memory_order_acquire) &&
+                          g_translucentControls.load(std::memory_order_relaxed);
+    if (view && canvas && (toolbar || controls) &&
         g_toolbarAvailable.load(std::memory_order_acquire) &&
-        g_active.load(std::memory_order_acquire) && IsToolbarRow(view)) {
-        // The canvas is clipped to this view; clear it to reveal the backdrop.
-        g_drawColor(canvas, 0, kSkBlendModeClear);
-        return;
+        g_active.load(std::memory_order_acquire)) {
+        const ViewRole role = GetViewRole(view);
+        if (toolbar && role == ViewRole::kToolbarRow) {
+            // The canvas is clipped to this view; clear it to reveal the backdrop.
+            g_drawColor(canvas, 0, kSkBlendModeClear);
+            return;
+        }
+        if (controls && role == ViewRole::kOmniboxText) {
+            // The location bar already paints the same color behind its text
+            // field. Painting a translucent color twice would darken the field.
+            return;
+        }
     }
     g_origOnPaintBackground(view, canvas);
+}
+
+unsigned int GetColor_Hook(const void* provider, int id) {
+    const unsigned int color = g_origGetColor(provider, id);
+    if (id < g_colorMin || id > g_colorMax ||
+        !g_colorsReady.load(std::memory_order_acquire) ||
+        !g_translucentControls.load(std::memory_order_relaxed) ||
+        !g_active.load(std::memory_order_acquire)) {
+        return color;
+    }
+    for (const ColorOverride& entry : g_colorOverrides) {
+        if (entry.id == id) {
+            const unsigned int alpha = (color >> 24) * entry.alpha / 0xFF;
+            return (color & 0x00FFFFFF) | (alpha << 24);
+        }
+    }
+    return color;
+}
+
+// ChromeColorIdName() binary-searches a sorted {ColorId, const char*} table.
+// Find the table from the function's first instructions (`mov r8d, <count>`
+// and `lea rax, [rip + <table>]`) and validate every entry before using it.
+struct ColorNameEntry {
+    int id;
+    const char* name;
+};
+static_assert(sizeof(ColorNameEntry) == 16);
+
+bool ResolveColorIds(HMODULE module, const void* nameFunction) {
+    const auto* base = reinterpret_cast<const unsigned char*>(module);
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+    const size_t imageSize = nt->OptionalHeader.SizeOfImage;
+    const auto inImage = [&](const void* p, size_t size) {
+        const auto* bytes = static_cast<const unsigned char*>(p);
+        return bytes >= base && size <= imageSize &&
+               static_cast<size_t>(bytes - base) <= imageSize - size;
+    };
+
+    constexpr size_t kScanBytes = 0x40;
+    const auto* code = static_cast<const unsigned char*>(nameFunction);
+    if (!inImage(code, kScanBytes)) {
+        return false;
+    }
+    unsigned int count = 0;
+    const ColorNameEntry* table = nullptr;
+    for (size_t i = 0; i + 7 <= kScanBytes; ++i) {
+        if (!count && code[i] == 0x41 && code[i + 1] == 0xB8) {
+            std::memcpy(&count, code + i + 2, sizeof(count));
+        }
+        if (!table && code[i] == 0x48 && code[i + 1] == 0x8D &&
+            (code[i + 2] & 0xC7) == 0x05) {
+            int32_t displacement = 0;
+            std::memcpy(&displacement, code + i + 3, sizeof(displacement));
+            table = reinterpret_cast<const ColorNameEntry*>(code + i + 7 + displacement);
+        }
+    }
+    if (count < 16 || count > 8192 || !table ||
+        !inImage(table, count * sizeof(ColorNameEntry))) {
+        return false;
+    }
+
+    int previous = INT_MIN;
+    for (unsigned int i = 0; i < count; ++i) {
+        const ColorNameEntry& entry = table[i];
+        if (entry.id <= previous || !inImage(entry.name, 8) ||
+            std::strncmp(entry.name, "kColor", 6) != 0) {
+            return false;
+        }
+        previous = entry.id;
+        for (ColorOverride& color : g_colorOverrides) {
+            const size_t length = std::strlen(color.name) + 1;
+            if (inImage(entry.name, length) &&
+                std::memcmp(entry.name, color.name, length) == 0) {
+                color.id = entry.id;
+            }
+        }
+    }
+
+    int minId = INT_MAX;
+    int maxId = INT_MIN;
+    for (const ColorOverride& color : g_colorOverrides) {
+        if (color.id >= 0) {
+            minId = std::min(minId, color.id);
+            maxId = std::max(maxId, color.id);
+        }
+    }
+    if (minId > maxId) {
+        return false;
+    }
+    g_colorMin = minId;
+    g_colorMax = maxId;
+    return true;
 }
 
 bool ShouldPaintTabBackground_Hook(const void* delegate) {
@@ -634,6 +792,15 @@ bool InstallChromeHooks() {
                 reinterpret_cast<InitFromModel_t>(address[kInitFromModel]),
                 InitFromModel_Hook, &g_origInitFromModel)) {
             Wh_Log(L"Glass tab strip hook unavailable");
+        }
+    }
+    if (address[kGetColor] && address[kChromeColorIdName]) {
+        if (ResolveColorIds(g_lookup.module, address[kChromeColorIdName]) &&
+            WindhawkUtils::SetFunctionHook(reinterpret_cast<GetColor_t>(address[kGetColor]),
+                                           GetColor_Hook, &g_origGetColor)) {
+            g_colorsReady.store(true, std::memory_order_release);
+        } else {
+            Wh_Log(L"Translucent controls unavailable");
         }
     }
     return true;
