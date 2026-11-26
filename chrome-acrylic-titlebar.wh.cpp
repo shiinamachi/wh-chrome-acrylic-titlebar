@@ -31,11 +31,13 @@ it. The mod hooks a few functions in `chrome.dll`:
   their background. On macOS Chrome does this itself; on Windows nothing does.
 - `views::View::OnPaintBackground` clears the toolbar and bookmarks bar
   backgrounds (optional).
-- `ui::ColorProvider::GetColor` lowers the alpha of a few colors: the address
-  field, the active tab, and the tab search and new tab button backgrounds.
-  The RGB stays the same, so the light or dark theme and Chrome's contrast
-  calculations still apply. The color ids are looked up by name in Chrome's
-  own id table (`ChromeColorIdName`), so they follow Chrome updates.
+- `ui::ColorProvider::GetColor` makes the address field translucent, clears
+  the tab search and new tab button backgrounds (hover feedback stays), and in
+  a dark theme turns the active tab into a light translucent highlight. The
+  color ids are looked up by name in Chrome's own id table
+  (`ChromeColorIdName`), so they follow Chrome updates.
+- `HorizontalTabStyleViews::GetPath` gives the active tab the rounded hover
+  shape instead of the file-folder shape that joins the toolbar.
 
 The backdrop Chrome requests (`DWMSBT_MAINWINDOW`) is replaced with the one
 chosen in the settings, Acrylic by default.
@@ -94,7 +96,7 @@ bardelyne (MIT).
   $description: Also clear the toolbar and bookmarks bar backgrounds. Applies immediately.
 - translucentControls: true
   $name: Translucent controls
-  $description: Make the address field and the active tab translucent, and show the tab search and new tab button backgrounds only on hover. The focused address field stays opaque to match its suggestions. Restart Chrome to apply.
+  $description: Make the address field translucent, draw the active tab as a light rounded highlight, and show the tab search and new tab button backgrounds only on hover. The focused address field stays opaque to match its suggestions. Restart Chrome to apply.
 - hideNativeCaptionButtons: true
   $name: Hide duplicate Windows caption buttons
   $description: Hide the minimize, maximize and close buttons that Windows draws under the transparent tab strip. This removes WS_SYSMENU from browser windows, which can change the Alt+Space menu.
@@ -143,6 +145,7 @@ enum Slot : unsigned {
     kSetIsGlassFrame,
     kGetColor,
     kChromeColorIdName,
+    kGetTabPath,
     kSlotCount,
 };
 constexpr std::wstring_view kSymbols[kSlotCount] = {
@@ -176,7 +179,15 @@ constexpr std::wstring_view kSymbols[kSlotCount] = {
     // Not called: only its sorted {ColorId, name} table is read (see
     // ResolveColorIds), because it reports an error for unknown ids.
     L"?ChromeColorIdName@@YA?AV?$basic_string@DU?$char_traits@D@__Cr@std@@V?$allocator@D@23@@__Cr@std@@H@Z",
+    // protected: virtual SkPath HorizontalTabStyleViews::GetPath(
+    //     TabStyle::PathType, float, const TabPathFlags&) const
+    L"?GetPath@HorizontalTabStyleViews@@MEBA?AVSkPath@@W4PathType@TabStyle@@MAEBUTabPathFlags@@@Z",
 };
+
+// TabStyle::PathType. kActiveTab is only used for the active tab's fill;
+// kHighlight is the rounded rectangle Chrome uses for hover and focus.
+constexpr int kTabPathActiveTab = 0;
+constexpr int kTabPathHighlight = 3;
 
 // Native x64 ABI shapes. A member function returning std::string_view writes
 // it through a hidden pointer passed after `this`.
@@ -192,6 +203,9 @@ using TabFill_t = bool (*)(const void* delegate);
 using InitFromModel_t = void (*)(void* controller, void* tabStrip);
 using SetIsGlassFrame_t = void (*)(void* tabStrip, bool isGlass);
 using GetColor_t = unsigned int (*)(const void* provider, int id);
+// SkPath is returned through a hidden pointer passed after `this`.
+using GetTabPath_t = void* (*)(const void* style, void* path, int type, float scale,
+                               const void* flags);
 constexpr int kSkBlendModeClear = 0;
 
 // Settings.
@@ -217,25 +231,33 @@ TabFill_t g_origShouldPaintTabBackground = nullptr;
 InitFromModel_t g_origInitFromModel = nullptr;
 SetIsGlassFrame_t g_setIsGlassFrame = nullptr;
 GetColor_t g_origGetColor = nullptr;
+GetTabPath_t g_origGetTabPath = nullptr;
 
-// Chrome colors made translucent. The RGB is kept, so the light or dark theme
-// and Chrome's contrast calculations still apply; only the alpha is scaled.
-// The ids are resolved by name at startup.
+// Chrome colors to restyle, resolved by name at startup.
+// kScaleAlpha keeps the RGB, so the light or dark theme still applies, and
+// scales the alpha. kHighlight turns a dark color into a translucent white
+// highlight (a light color is scaled like kScaleAlpha). Tab text colors come
+// from their own ids, so their contrast doesn't depend on these.
+enum class ColorMode { kScaleAlpha, kHighlight };
 struct ColorOverride {
     const char* name;
+    ColorMode mode;
     unsigned alpha;
     int id;
 };
 ColorOverride g_colorOverrides[] = {
-    {"kColorLocationBarBackground", 0x80, -1},
-    {"kColorLocationBarBackgroundHovered", 0xA0, -1},
-    {"kColorTabBackgroundActiveFrameActive", 0x99, -1},
-    {"kColorTabBackgroundActiveFrameInactive", 0x99, -1},
+    {"kColorLocationBarBackground", ColorMode::kScaleAlpha, 0x80, -1},
+    {"kColorLocationBarBackgroundHovered", ColorMode::kScaleAlpha, 0xA0, -1},
+    {"kColorTabBackgroundActiveFrameActive", ColorMode::kHighlight, 0x29, -1},
+    {"kColorTabBackgroundActiveFrameInactive", ColorMode::kHighlight, 0x1C, -1},
     // Hover feedback stays: it is drawn by the button's ink drop.
-    {"kColorNewTabButtonBackgroundFrameActive", 0, -1},
-    {"kColorNewTabButtonBackgroundFrameInactive", 0, -1},
-    {"kColorTabSearchButtonBackground", 0, -1},
+    {"kColorNewTabButtonBackgroundFrameActive", ColorMode::kScaleAlpha, 0, -1},
+    {"kColorNewTabButtonBackgroundFrameInactive", ColorMode::kScaleAlpha, 0, -1},
+    {"kColorNewTabButtonCRBackgroundFrameActive", ColorMode::kScaleAlpha, 0, -1},
+    {"kColorNewTabButtonCRBackgroundFrameInactive", ColorMode::kScaleAlpha, 0, -1},
+    {"kColorTabSearchButtonBackground", ColorMode::kScaleAlpha, 0, -1},
 };
+constexpr unsigned kLightColorAlpha = 0xCC;
 int g_colorMin = 0;
 int g_colorMax = -1;
 std::atomic<bool> g_colorsReady{false};
@@ -383,12 +405,33 @@ unsigned int GetColor_Hook(const void* provider, int id) {
         return color;
     }
     for (const ColorOverride& entry : g_colorOverrides) {
-        if (entry.id == id) {
-            const unsigned int alpha = (color >> 24) * entry.alpha / 0xFF;
-            return (color & 0x00FFFFFF) | (alpha << 24);
+        if (entry.id != id) {
+            continue;
         }
+        unsigned int scale = entry.alpha;
+        if (entry.mode == ColorMode::kHighlight) {
+            const unsigned int luma = (((color >> 16) & 0xFF) * 299 +
+                                       ((color >> 8) & 0xFF) * 587 + (color & 0xFF) * 114) /
+                                      1000;
+            if (luma < 0x80) {
+                return 0x00FFFFFF | (entry.alpha << 24);
+            }
+            scale = kLightColorAlpha;
+        }
+        const unsigned int alpha = (color >> 24) * scale / 0xFF;
+        return (color & 0x00FFFFFF) | (alpha << 24);
     }
     return color;
+}
+
+void* GetTabPath_Hook(const void* style, void* path, int type, float scale,
+                      const void* flags) {
+    if (type == kTabPathActiveTab && g_colorsReady.load(std::memory_order_acquire) &&
+        g_translucentControls.load(std::memory_order_relaxed) &&
+        g_active.load(std::memory_order_acquire)) {
+        type = kTabPathHighlight;
+    }
+    return g_origGetTabPath(style, path, type, scale, flags);
 }
 
 // ChromeColorIdName() binary-searches a sorted {ColorId, const char*} table.
@@ -799,6 +842,12 @@ bool InstallChromeHooks() {
             WindhawkUtils::SetFunctionHook(reinterpret_cast<GetColor_t>(address[kGetColor]),
                                            GetColor_Hook, &g_origGetColor)) {
             g_colorsReady.store(true, std::memory_order_release);
+            if (address[kGetTabPath] &&
+                !WindhawkUtils::SetFunctionHook(
+                    reinterpret_cast<GetTabPath_t>(address[kGetTabPath]), GetTabPath_Hook,
+                    &g_origGetTabPath)) {
+                Wh_Log(L"Active tab shape hook unavailable");
+            }
         } else {
             Wh_Log(L"Translucent controls unavailable");
         }
