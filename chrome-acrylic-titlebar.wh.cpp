@@ -49,7 +49,10 @@ can delete folders for old Chrome versions to free disk space.
 
 ## Settings
 
-**Backdrop** (default: Acrylic)
+### Backdrop
+
+Default: Acrylic
+
 The Windows effect shown behind the tab strip. Applies to windows opened after
 the change.
 
@@ -57,16 +60,25 @@ the change.
 - **Mica Alt**: a darker, subtle tint taken from your wallpaper.
 - **Mica**: a lighter, subtle tint taken from your wallpaper.
 
-**Transparent inactive tabs** (default: on)
+### Transparent inactive tabs
+
+Default: on
+
 Tabs you're not viewing don't get a background of their own, so the effect
 shows behind them too. The current tab and the tab under the mouse are still
 highlighted. Applies to windows opened after the change.
 
-**Transparent toolbar** (default: on)
+### Transparent toolbar
+
+Default: on
+
 Extends the effect to the row with the address bar and to the bookmarks bar.
 Turn it off to keep that row solid. Applies right away.
 
-**Translucent controls** (default: on)
+### Translucent controls
+
+Default: on
+
 Restyles the controls on top of the effect:
 
 - the address bar becomes translucent, and its site info icon sits on it
@@ -81,15 +93,24 @@ Restyles the controls on top of the effect:
 While you type in the address bar, it stays solid so it matches the list of
 suggestions below it. Restart Chrome to apply.
 
-**Incognito tint** (default: on)
+### Incognito tint
+
+Default: on
+
 Adds a dark tint behind the tab strip and toolbar of incognito windows.
 
-**Hide duplicate Windows caption buttons** (default: on)
+### Hide duplicate Windows caption buttons
+
+Default: on
+
 Once the tab strip is see-through, Windows' own minimize, maximize and close
 buttons would show up behind Chrome's. This hides them. As a side effect, the
 Alt+Space window menu may not open in Chrome windows.
 
-**Download symbols from Google** (default: on)
+### Download symbols from Google
+
+Default: on
+
 Lets Windhawk download Chrome's symbols when they aren't on your PC yet. If you
 turn it off, the mod only works with symbols that were already downloaded.
 Restart Chrome to apply.
