@@ -25,17 +25,20 @@ it. The mod hooks a few functions in `chrome.dll`:
 
 - `BrowserDesktopWindowTreeHostWin::ShouldWindowContentsBeTransparent` returns
   `true`, so Chrome composites its window with a transparent background.
-- `BrowserFrameViewWin::OnPaint` skips painting the titlebar.
+- `BrowserFrameViewWin::OnPaint` skips painting the titlebar. In incognito
+  windows it paints a dark translucent tint instead (optional), so they stay
+  recognizable and the wallpaper is calmer behind them.
 - `BrowserTabStripController::InitFromModel` marks each tab strip as a glass
   frame with `TabStrip::SetIsGlassFrame(true)`, so inactive tabs don't fill
   their background. On macOS Chrome does this itself; on Windows nothing does.
-- `views::View::OnPaintBackground` clears the toolbar and bookmarks bar
+- `views::View::OnPaintBackground` skips the toolbar and bookmarks bar
   backgrounds (optional). With **Translucent controls** it also skips the
   backgrounds of the address field's text and site info icon, so they sit on
   the field's own background, and hides the toolbar divider.
 - `ui::ColorProvider::GetColor` makes the address field translucent, clears
   the tab search and new tab button backgrounds (hover feedback stays), and in
-  a dark theme turns the active tab into a light translucent highlight. The
+  a dark theme turns the active tab and the incognito chip into a light
+  translucent highlight. The
   color ids are looked up by name in Chrome's own id table
   (`ChromeColorIdName`), so they follow Chrome updates.
 - `HorizontalTabStyleViews::GetPath` gives the active tab the rounded hover
@@ -101,6 +104,9 @@ bardelyne (MIT).
 - translucentControls: true
   $name: Translucent controls
   $description: Make the address field translucent, draw the active tab as a light rounded highlight, hide the separators between tabs and the toolbar divider, and show the tab search and new tab button backgrounds only on hover. The focused address field stays opaque to match its suggestions. Restart Chrome to apply.
+- incognitoTint: true
+  $name: Incognito tint
+  $description: Paint a dark translucent tint behind the tab strip and toolbar of incognito windows. Applies when the window repaints.
 - hideNativeCaptionButtons: true
   $name: Hide duplicate Windows caption buttons
   $description: Hide the minimize, maximize and close buttons that Windows draws under the transparent tab strip. This removes WS_SYSMENU from browser windows, which can change the Alt+Space menu.
@@ -152,6 +158,9 @@ enum Slot : unsigned {
     kGetTabPath,
     kPaintTab,
     kDrawRoundRect,
+    kGetBrowserView,
+    kGetProfile,
+    kIsIncognitoProfile,
     kSlotCount,
 };
 constexpr std::wstring_view kSymbols[kSlotCount] = {
@@ -195,6 +204,13 @@ constexpr std::wstring_view kSymbols[kSlotCount] = {
     // Tab painting fills with DrawRect and strokes with DrawPath; DrawRoundRect
     // only draws the separators, whose alpha Chrome sets itself.
     L"?DrawRoundRect@Canvas@gfx@@QEAAXAEBVRectF@2@MAEBVPaintFlags@cc@@@Z",
+    // Incognito detection for a frame view:
+    // public: BrowserView* BrowserFrameView::GetBrowserView() const
+    L"?GetBrowserView@BrowserFrameView@@QEBAPEAVBrowserView@@XZ",
+    // public: Profile* BrowserView::GetProfile() const
+    L"?GetProfile@BrowserView@@QEBAPEAVProfile@@XZ",
+    // public: bool Profile::IsIncognitoProfile() const
+    L"?IsIncognitoProfile@Profile@@QEBA_NXZ",
 };
 
 // TabStyle::PathType. kActiveTab is only used for the active tab's fill;
@@ -220,15 +236,20 @@ using GetColor_t = unsigned int (*)(const void* provider, int id);
 using GetTabPath_t = void* (*)(const void* style, void* path, int type, float scale,
                                const void* flags);
 using PaintTab_t = void (*)(const void* style, void* canvas);
+using GetPointer_t = void* (*)(const void* self);
+using IsIncognitoProfile_t = bool (*)(const void* profile);
 using DrawRoundRect_t = void (*)(void* canvas, const void* rect, float radius,
                                  const void* flags);
-constexpr int kSkBlendModeClear = 0;
+constexpr int kSkBlendModeSrcOver = 3;
+// ARGB, painted over the backdrop of incognito windows.
+constexpr unsigned int kIncognitoTint = 0x80181A1C;
 
 // Settings.
 std::atomic<UINT> g_backdrop{kBackdropAcrylic};
 std::atomic<bool> g_inactiveTabs{true};
 std::atomic<bool> g_toolbar{true};
 std::atomic<bool> g_translucentControls{true};
+std::atomic<bool> g_incognitoTint{true};
 std::atomic<bool> g_hideCaptions{true};
 std::atomic<bool> g_downloadSymbols{true};
 
@@ -250,6 +271,9 @@ GetColor_t g_origGetColor = nullptr;
 GetTabPath_t g_origGetTabPath = nullptr;
 PaintTab_t g_origPaintTab = nullptr;
 DrawRoundRect_t g_origDrawRoundRect = nullptr;
+GetPointer_t g_getBrowserView = nullptr;
+GetPointer_t g_getProfile = nullptr;
+IsIncognitoProfile_t g_isIncognitoProfile = nullptr;
 thread_local unsigned t_tabPaintDepth = 0;
 
 // Chrome colors to restyle, resolved by name at startup.
@@ -275,6 +299,7 @@ ColorOverride g_colorOverrides[] = {
     {"kColorNewTabButtonCRBackgroundFrameActive", ColorMode::kScaleAlpha, 0, -1},
     {"kColorNewTabButtonCRBackgroundFrameInactive", ColorMode::kScaleAlpha, 0, -1},
     {"kColorTabSearchButtonBackground", ColorMode::kScaleAlpha, 0, -1},
+    {"kColorAvatarButtonHighlightIncognito", ColorMode::kHighlight, 0x24, -1},
 };
 constexpr unsigned kLightColorAlpha = 0xCC;
 int g_colorMin = 0;
@@ -300,6 +325,7 @@ void LoadSettings() {
     g_inactiveTabs.store(Wh_GetIntSetting(L"inactiveTabs") != 0);
     g_toolbar.store(Wh_GetIntSetting(L"toolbar") != 0);
     g_translucentControls.store(Wh_GetIntSetting(L"translucentControls") != 0);
+    g_incognitoTint.store(Wh_GetIntSetting(L"incognitoTint") != 0);
     g_hideCaptions.store(Wh_GetIntSetting(L"hideNativeCaptionButtons") != 0);
     g_downloadSymbols.store(Wh_GetIntSetting(L"downloadSymbols") != 0);
 }
@@ -366,13 +392,26 @@ bool Transparent_Hook(const void* host) {
     return true;
 }
 
+bool IsIncognitoFrame(const void* frameView) {
+    if (!g_getBrowserView || !g_getProfile || !g_isIncognitoProfile) {
+        return false;
+    }
+    const void* browserView = g_getBrowserView(frameView);
+    const void* profile = browserView ? g_getProfile(browserView) : nullptr;
+    return profile && g_isIncognitoProfile(profile);
+}
+
 void FrameOnPaint_Hook(void* view, void* canvas) {
-    // Leave the titlebar unpainted so the DWM backdrop shows through. Child
-    // views (tabs, caption buttons, toolbar) paint afterwards as usual.
-    if (g_active.load(std::memory_order_acquire)) {
+    if (!g_active.load(std::memory_order_acquire)) {
+        g_origFrameOnPaint(view, canvas);
         return;
     }
-    g_origFrameOnPaint(view, canvas);
+    // Leave the titlebar unpainted so the DWM backdrop shows through. Child
+    // views (tabs, caption buttons, toolbar) paint afterwards as usual.
+    if (canvas && g_drawColor && g_incognitoTint.load(std::memory_order_relaxed) &&
+        IsIncognitoFrame(view)) {
+        g_drawColor(canvas, kIncognitoTint, kSkBlendModeSrcOver);
+    }
 }
 
 enum class ViewRole { kOther, kToolbarRow, kOmniboxText, kOmniboxIcon, kToolbarDivider };
@@ -408,8 +447,8 @@ void OnPaintBackground_Hook(void* view, void* canvas) {
         g_active.load(std::memory_order_acquire)) {
         const ViewRole role = GetViewRole(view);
         if (toolbar && role == ViewRole::kToolbarRow) {
-            // The canvas is clipped to this view; clear it to reveal the backdrop.
-            g_drawColor(canvas, 0, kSkBlendModeClear);
+            // Nothing else paints under the toolbar, so skipping its background
+            // reveals the backdrop, or the frame's incognito tint.
             return;
         }
         if (controls && (role == ViewRole::kOmniboxText || role == ViewRole::kOmniboxIcon)) {
@@ -891,6 +930,13 @@ bool InstallChromeHooks() {
                     reinterpret_cast<GetTabPath_t>(address[kGetTabPath]), GetTabPath_Hook,
                     &g_origGetTabPath)) {
                 Wh_Log(L"Active tab shape hook unavailable");
+            }
+            if (address[kGetBrowserView] && address[kGetProfile] &&
+                address[kIsIncognitoProfile]) {
+                g_getBrowserView = reinterpret_cast<GetPointer_t>(address[kGetBrowserView]);
+                g_getProfile = reinterpret_cast<GetPointer_t>(address[kGetProfile]);
+                g_isIncognitoProfile =
+                    reinterpret_cast<IsIncognitoProfile_t>(address[kIsIncognitoProfile]);
             }
             if (address[kPaintTab] && address[kDrawRoundRect] &&
                 (!WindhawkUtils::SetFunctionHook(
