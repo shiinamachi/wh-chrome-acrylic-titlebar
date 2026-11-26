@@ -48,8 +48,7 @@ during that first download, Windhawk waits until the download finishes.
 
 Default: Acrylic
 
-The Windows effect shown behind the tab strip. Applies to windows opened after
-the change.
+The Windows effect shown behind the tab strip. Applies right away.
 
 - **Acrylic**: a strong blur of whatever is behind the window.
 - **Mica Alt**: a darker, subtle tint taken from your wallpaper.
