@@ -3,7 +3,7 @@
 // @name            Chrome Acrylic Titlebar
 // @description     Show the Windows Acrylic backdrop behind Chrome's tab strip and toolbar
 // @version         0.1.0
-// @author          kentakang
+// @author          shiinamachi
 // @github          https://github.com/kentakang
 // @license         MIT
 // @architecture    x86-64
