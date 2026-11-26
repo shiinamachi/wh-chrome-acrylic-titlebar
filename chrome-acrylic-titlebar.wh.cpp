@@ -2,7 +2,7 @@
 // @id              chrome-acrylic-titlebar
 // @name            Chrome Acrylic Titlebar (prototype)
 // @description     Show the Windows Acrylic backdrop behind Chrome's tab strip
-// @version         0.2.2
+// @version         0.3.0
 // @author          sakuranight-win11
 // @license         MIT
 // @architecture    x86-64
@@ -26,8 +26,11 @@ Chrome 158은 창에 Mica 배경을 지정하지만 탭 줄을 프레임 색으�
   Chrome이 투명 배경으로 화면을 출력하게 합니다.
 - `BrowserFrameViewWin::OnPaint`: 제목 표시줄 칠하기를 건너뜁니다.
 
-비활성 탭은 각자 배경을 칠하므로, 탭(`TabView`)의 스타일 위임 객체가 비활성 탭 배경을 칠할지
-물을 때(`TabStyleViewDelegateImpl::ShouldPaintTabBackgroundColor`) `false`를 돌려줍니다.
+비활성 탭은 각자 배경을 칠합니다. Chrome에는 macOS용 "유리 프레임" 탭 줄이 있어서, 탭 줄이 유리
+상태이면 비활성 탭을 칠하지 않습니다. Windows에서는 이 상태를 켜 주는 `GlassFrameService`가 만들어지지
+않으므로, 창마다 탭 줄을 초기화하는 `BrowserTabStripController::InitFromModel` 직후에
+`TabStrip::SetIsGlassFrame(true)`를 부릅니다. 새 `TabView` 탭 경로에 대비해
+`TabStyleViewDelegateImpl::ShouldPaintTabBackgroundColor`도 `false`를 돌려주게 합니다.
 
 그리고 Chrome이 지정하는 Mica(`DWMSBT_MAINWINDOW`)를 Acrylic(`DWMSBT_TRANSIENTWINDOW`)으로 바꿉니다.
 
@@ -70,7 +73,7 @@ Windhawk는 찾은 함수 위치를 캐시하므로, 그다음부터는 바로 �
   - mica: Mica
 - inactiveTabs: true
   $name: 비활성 탭 배경 지우기
-  $description: 비활성 탭이 자기 배경을 칠하지 않게 해서 탭 뒤로도 배경 효과가 보이게 합니다. 활성 탭, 선택한 탭, 마우스를 올린 탭은 그대로 칠합니다.
+  $description: 비활성 탭이 자기 배경을 칠하지 않게 해서 탭 뒤로도 배경 효과가 보이게 합니다. 활성 탭, 선택한 탭, 마우스를 올린 탭은 그대로 칠합니다. 새로 여는 창부터 적용됩니다.
 - toolbar: false
   $name: 주소창 줄도 투명하게
   $description: 주소창 줄과 북마크 바의 배경도 지웁니다. 활성 탭은 원래 색으로 남습니다.
@@ -115,6 +118,8 @@ enum Slot : unsigned {
     kGetClassName,
     kDrawColor,
     kShouldPaintTabBackground,
+    kInitFromModel,
+    kSetIsGlassFrame,
     kSlotCount,
 };
 constexpr std::wstring_view kSymbols[kSlotCount] = {
@@ -134,6 +139,14 @@ constexpr std::wstring_view kSymbols[kSlotCount] = {
     // active and selected tabs are painted before it is asked, and the hover
     // highlight is painted separately.
     L"?ShouldPaintTabBackgroundColor@TabStyleViewDelegateImpl@@UEBA_NXZ",
+    // public: void BrowserTabStripController::InitFromModel(TabStrip*)
+    // Runs once per browser window for the classic Tab/TabStrip path that
+    // Chrome 158 still uses for the horizontal tab strip.
+    L"?InitFromModel@BrowserTabStripController@@QEAAXPEAVTabStrip@@@Z",
+    // public: void TabStrip::SetIsGlassFrame(bool)
+    // Normally driven by GlassFrameService, which Windows builds never create.
+    // A glass tab strip leaves inactive tabs unfilled (TabStrip::IsGlassFrame).
+    L"?SetIsGlassFrame@TabStrip@@QEAAX_N@Z",
 };
 
 // Native x64 ABI shapes. A member function returning std::string_view writes
@@ -147,6 +160,8 @@ using Paint_t = void (*)(void* view, void* canvas);
 using GetClassName_t = NativeClassName* (*)(const void* view, NativeClassName* out);
 using DrawColor_t = void (*)(void* canvas, unsigned int color, int mode);
 using TabFill_t = bool (*)(const void* delegate);
+using InitFromModel_t = void (*)(void* controller, void* tabStrip);
+using SetIsGlassFrame_t = void (*)(void* tabStrip, bool isGlass);
 constexpr int kSkBlendModeClear = 0;
 
 // Settings.
@@ -168,6 +183,8 @@ Paint_t g_origOnPaintBackground = nullptr;
 GetClassName_t g_getClassName = nullptr;
 DrawColor_t g_drawColor = nullptr;
 TabFill_t g_origShouldPaintTabBackground = nullptr;
+InitFromModel_t g_origInitFromModel = nullptr;
+SetIsGlassFrame_t g_setIsGlassFrame = nullptr;
 
 decltype(&DwmSetWindowAttribute) g_origDwmSetWindowAttribute = nullptr;
 decltype(&LoadLibraryExW) g_origLoadLibraryExW = nullptr;
@@ -289,6 +306,15 @@ bool ShouldPaintTabBackground_Hook(const void* delegate) {
         return false;
     }
     return g_origShouldPaintTabBackground(delegate);
+}
+
+void InitFromModel_Hook(void* controller, void* tabStrip) {
+    g_origInitFromModel(controller, tabStrip);
+    if (tabStrip && g_setIsGlassFrame &&
+        g_inactiveTabs.load(std::memory_order_relaxed) &&
+        g_active.load(std::memory_order_acquire)) {
+        g_setIsGlassFrame(tabStrip, true);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -592,6 +618,14 @@ bool InstallChromeHooks() {
             reinterpret_cast<TabFill_t>(address[kShouldPaintTabBackground]),
             ShouldPaintTabBackground_Hook, &g_origShouldPaintTabBackground)) {
         Wh_Log(L"Inactive tab background hook unavailable");
+    }
+    if (address[kInitFromModel] && address[kSetIsGlassFrame]) {
+        g_setIsGlassFrame = reinterpret_cast<SetIsGlassFrame_t>(address[kSetIsGlassFrame]);
+        if (!WindhawkUtils::SetFunctionHook(
+                reinterpret_cast<InitFromModel_t>(address[kInitFromModel]),
+                InitFromModel_Hook, &g_origInitFromModel)) {
+            Wh_Log(L"Glass tab strip hook unavailable");
+        }
     }
     return true;
 }
