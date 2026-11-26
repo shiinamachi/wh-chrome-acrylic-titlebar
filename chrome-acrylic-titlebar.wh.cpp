@@ -48,6 +48,10 @@ symbols for the new version are downloaded once more, so repeat these steps.
 Downloaded symbols are kept in `C:\ProgramData\Windhawk\Engine\Symbols`; you
 can delete folders for old Chrome versions to free disk space.
 
+While the symbols for your Chrome version aren't downloaded yet, Chrome may
+take up to 4 extra seconds to start. If you turn the mod off or update it
+during that first download, Windhawk waits until the download finishes.
+
 ## Settings
 
 ### Backdrop
@@ -121,6 +125,8 @@ Restart Chrome to apply.
 - When a Chrome window isn't focused, Windows shows the backdrop as a plain
   color. It returns when you click the window.
 - The tint follows the Windows light or dark mode.
+- If you use a Chrome theme with a background image, the image isn't shown
+  behind the tab strip; the Windows effect is shown there instead.
 - If something looks wrong, disable the mod and restart Chrome to get the
   original look back.
 
