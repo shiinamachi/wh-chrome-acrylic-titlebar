@@ -928,7 +928,9 @@ bool ResolveAddresses(HMODULE module, void** result) {
         return false;
     }
     std::memcpy(result, address, sizeof(address));
-    return address[kTransparent] && address[kFrameOnPaint];
+    // Without HWNDForView no window could be marked, which would leave windows
+    // transparent without the backdrop and caption changes, so it's required too.
+    return address[kTransparent] && address[kFrameOnPaint] && address[kHwndForView];
 }
 
 DWORD WINAPI LookupWorker(void*) {

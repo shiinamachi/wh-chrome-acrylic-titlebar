@@ -170,6 +170,8 @@ Chrome은 창에 Mica 배경을 지정하지만 탭 줄과 주소창 줄을 불�
 | 탭 구분선 | `HorizontalTabStyleViews::PaintTab` 동안 `gfx::Canvas::DrawRoundRect` | 탭 그리기에서 이 함수는 구분선에만 쓰이므로 건너뜁니다. 구분선 색은 Chrome이 알파를 덮어써서 색으로는 숨길 수 없습니다. |
 | 창 단추 | `Get/SetWindowLong(Ptr)W` | 투명한 탭 줄 아래에 Windows가 그리는 기본 창 단추를 숨기려고 표시한 브라우저 창의 `WS_SYSMENU`를 빼고, Chromium에는 원래 스타일을 보여 줍니다(Brave Acrylic 방식). 스타일 변경은 그리기 도중에 하지 않도록 스레드 풀 작업 객체 하나로 하고, 모드를 내릴 때 그 작업이 끝나기를 기다린 뒤 원래대로 되돌립니다. |
 
+필수 심볼은 `ShouldWindowContentsBeTransparent`, `BrowserFrameViewWin::OnPaint`, `views::HWNDForView`입니다. 하나라도 없으면 모드는 Chrome을 건드리지 않습니다. 나머지는 기능별로, 필요한 심볼이 모두 있을 때만 켭니다.
+
 심볼은 `chrome.dll`이 로드될 때 작업 스레드에서 찾고 최대 4초 기다립니다. 그보다 오래 걸리면 Chrome은 효과 없이 시작하고, 찾은 주소는 Windhawk가 캐시해 다음 실행부터 적용됩니다.
 
 ## Chrome 후킹 원칙
