@@ -114,29 +114,29 @@ bardelyne (MIT).
 /*
 - backdrop: acrylic
   $name: Backdrop
-  $description: The Windows backdrop shown behind the tab strip. Applies to new windows.
+  $description: The Windows effect shown behind the tab strip. Applies to windows opened after the change.
   $options:
   - acrylic: Acrylic
   - tabbed: Mica Alt
   - mica: Mica
 - inactiveTabs: true
   $name: Transparent inactive tabs
-  $description: Inactive tabs don't fill their background, so the backdrop shows behind them. Active, selected and hovered tabs are still painted. Applies to new windows.
+  $description: Tabs you're not viewing don't get a background of their own, so the effect shows behind them too. Applies to windows opened after the change.
 - toolbar: true
   $name: Transparent toolbar
-  $description: Also clear the toolbar and bookmarks bar backgrounds. Applies immediately.
+  $description: Extend the effect to the address bar row and the bookmarks bar. Applies right away.
 - translucentControls: true
   $name: Translucent controls
-  $description: Make the address field translucent, draw the active tab as a light rounded highlight, hide the separators between tabs and the toolbar divider, and show the tab search and new tab button backgrounds only on hover. The focused address field stays opaque to match its suggestions. Restart Chrome to apply.
+  $description: Make the address bar translucent, show the current tab as a soft highlight, hide the lines between tabs, and show the tab strip buttons' background only on hover. Restart Chrome to apply.
 - incognitoTint: true
   $name: Incognito tint
-  $description: Paint a dark translucent tint behind the tab strip and toolbar of incognito windows. Applies when the window repaints.
+  $description: Add a dark tint behind the tab strip and toolbar of incognito windows.
 - hideNativeCaptionButtons: true
   $name: Hide duplicate Windows caption buttons
-  $description: Hide the minimize, maximize and close buttons that Windows draws under the transparent tab strip. This removes WS_SYSMENU from browser windows, which can change the Alt+Space menu.
+  $description: Hide the Windows minimize, maximize and close buttons that would show behind Chrome's own. The Alt+Space window menu may not open in Chrome windows.
 - downloadSymbols: true
   $name: Download symbols from Google
-  $description: When the symbols aren't cached, download the chrome.dll PDB from Google's symbol server (about 1.1 GB compressed, 5.8 GB on disk). When off, only symbols already on disk are used. Restart Chrome to apply.
+  $description: Let Windhawk download Chrome's symbols (about 1.1 GB) when they aren't on your PC yet. When off, only symbols downloaded earlier are used. Restart Chrome to apply.
 */
 // ==/WindhawkModSettings==
 
