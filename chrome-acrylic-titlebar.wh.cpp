@@ -5,6 +5,7 @@
 // @version         1.0.0
 // @author          shiinamachi
 // @github          https://github.com/kentakang
+// @homepage        https://github.com/shiinamachi/wh-chrome-acrylic-titlebar
 // @license         MIT
 // @architecture    x86-64
 // @include         chrome.exe
