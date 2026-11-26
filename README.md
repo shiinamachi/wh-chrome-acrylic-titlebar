@@ -1,70 +1,94 @@
 # Chrome Acrylic Titlebar
 
-Makes Google Chrome's tab strip and toolbar transparent, so the Windows 11
-Acrylic backdrop shows through. Web page content is not changed.
+Lets the Windows 11 Acrylic effect show through the top of Google Chrome.
+The tab strip and the toolbar become see-through and blurred, like the rest of
+a Windows 11 style desktop, while web pages stay exactly as they are.
 
-## How it works
+![Chrome with Chrome Acrylic Titlebar](https://raw.githubusercontent.com/shiinamachi/wh-chrome-acrylic-titlebar/main/images/chrome-normal.webp)
 
-Chrome asks Windows for a Mica backdrop but paints its frame opaque on top of
-it. The mod hooks a few functions in `chrome.dll`:
+Incognito windows get a darker tint, so you can still tell them apart:
 
-- `BrowserDesktopWindowTreeHostWin::ShouldWindowContentsBeTransparent` returns
-  `true`, so Chrome composites its window with a transparent background.
-- `BrowserFrameViewWin::OnPaint` skips painting the titlebar. In incognito
-  windows it paints a dark translucent tint instead (optional), so they stay
-  recognizable and the wallpaper is calmer behind them.
-- `BrowserTabStripController::InitFromModel` marks each tab strip as a glass
-  frame with `TabStrip::SetIsGlassFrame(true)`, so inactive tabs don't fill
-  their background. On macOS Chrome does this itself; on Windows nothing does.
-- `views::View::OnPaintBackground` clears the toolbar and bookmarks bar
-  backgrounds (optional), and paints the incognito tint there again. With **Translucent controls** it also skips the
-  backgrounds of the address field's text and site info icon, so they sit on
-  the field's own background, and hides the toolbar divider.
-- `ui::ColorProvider::GetColor` makes the address field translucent, clears
-  the tab search and new tab button backgrounds (hover feedback stays), and in
-  a dark theme turns the active tab and the incognito chip into a light
-  translucent highlight. The
-  color ids are looked up by name in Chrome's own id table
-  (`ChromeColorIdName`), so they follow Chrome updates.
-- `HorizontalTabStyleViews::GetPath` gives the active tab the rounded hover
-  shape instead of the file-folder shape that joins the toolbar.
-- While `HorizontalTabStyleViews::PaintTab` runs, `gfx::Canvas::DrawRoundRect`
-  is skipped: in tab painting it only draws the separators between tabs.
+![An incognito window with Chrome Acrylic Titlebar](https://raw.githubusercontent.com/shiinamachi/wh-chrome-acrylic-titlebar/main/images/chrome-incognito.webp)
 
-The backdrop Chrome requests (`DWMSBT_MAINWINDOW`) is replaced with the one
-chosen in the settings, Acrylic by default.
+## Requirements
 
-## First run and Chrome updates
+- Windows 11 22H2 or later, with **Transparency effects** turned on
+  (Settings > Personalization > Colors).
+- Google Chrome, 64-bit. Tested with Chrome 158.
 
-The mod needs the symbols (PDB) of the installed `chrome.dll`. Windhawk
-downloads them from Google's symbol server. For Chrome 158 the download is
-about 1.1 GB compressed and about 5.8 GB on disk.
+## Getting started
 
-1. Enable the mod and start Chrome. While the symbols download, Chrome starts
-   normally without the effect.
-2. Wait a few minutes until the download finishes. With logging enabled, the
-   mod logs `Symbols are ready`.
-3. Fully exit Chrome, including any background instance, and start it again.
+To find the parts of Chrome it changes, the mod needs Chrome's debug symbols.
+Windhawk downloads them from Google the first time, which takes a while.
 
-Windhawk caches the function addresses, so later starts apply the effect
-immediately. A Chrome update replaces `chrome.dll`, so the steps repeat after
-each update. Without a cache hit, Chrome waits up to 4 seconds at startup.
-Downloaded PDBs stay in `C:\ProgramData\Windhawk\Engine\Symbols`; old versions
-can be deleted.
+1. Enable the mod and start Chrome. Chrome opens normally, without the
+   effect, while the symbols download in the background (about 1.1 GB).
+2. Wait a few minutes for the download to finish.
+3. Fully exit Chrome, including any instance running in the background, and
+   start it again. The effect is now applied.
 
-## Notes
+Later starts apply the effect right away. After each Chrome update, the
+symbols for the new version are downloaded once more, so repeat these steps.
+Downloaded symbols are kept in `C:\ProgramData\Windhawk\Engine\Symbols`; you
+can delete folders for old Chrome versions to free disk space.
 
-- Tested with Chrome 158.0.8127.37 (x64). If a hooked function is missing in
-  another version, the mod leaves Chrome unchanged.
-- Windows draws the Acrylic backdrop, so its tint follows the system light or
-  dark theme, and it turns solid while the window is inactive.
-- With **Translucent controls**, the focused address field stays opaque so it
-  matches the suggestion list below it.
-- **Hide duplicate Windows caption buttons** removes `WS_SYSMENU` from browser
-  windows. This can change the Alt+Space menu and tools that inspect window
-  styles.
-- To undo everything, disable the mod and restart Chrome.
+## Settings
 
-Hiding the duplicate caption buttons and the asynchronous symbol lookup are
+**Backdrop** (default: Acrylic)
+The Windows effect shown behind the tab strip. Applies to windows opened after
+the change.
+
+- **Acrylic**: a strong blur of whatever is behind the window.
+- **Mica Alt**: a darker, subtle tint taken from your wallpaper.
+- **Mica**: a lighter, subtle tint taken from your wallpaper.
+
+**Transparent inactive tabs** (default: on)
+Tabs you're not viewing don't get a background of their own, so the effect
+shows behind them too. The current tab and the tab under the mouse are still
+highlighted. Applies to windows opened after the change.
+
+**Transparent toolbar** (default: on)
+Extends the effect to the row with the address bar and to the bookmarks bar.
+Turn it off to keep that row solid. Applies right away.
+
+**Translucent controls** (default: on)
+Restyles the controls on top of the effect:
+
+- the address bar becomes translucent, and its site info icon sits on it
+  without a separate background;
+- the current tab is shown as a soft, light rounded highlight;
+- the lines between tabs and the divider next to your profile picture are
+  hidden;
+- the tab search and new tab buttons only show a background while you hover
+  them;
+- the "Incognito" label gets the same soft highlight as the current tab.
+
+While you type in the address bar, it stays solid so it matches the list of
+suggestions below it. Restart Chrome to apply.
+
+**Incognito tint** (default: on)
+Adds a dark tint behind the tab strip and toolbar of incognito windows.
+
+**Hide duplicate Windows caption buttons** (default: on)
+Once the tab strip is see-through, Windows' own minimize, maximize and close
+buttons would show up behind Chrome's. This hides them. As a side effect, the
+Alt+Space window menu may not open in Chrome windows.
+
+**Download symbols from Google** (default: on)
+Lets Windhawk download Chrome's symbols when they aren't on your PC yet. If you
+turn it off, the mod only works with symbols that were already downloaded.
+Restart Chrome to apply.
+
+## Good to know
+
+- When a Chrome window isn't focused, Windows shows the backdrop as a plain
+  color. It returns when you click the window.
+- The tint follows the Windows light or dark mode.
+- If something looks wrong, disable the mod and restart Chrome to get the
+  original look back.
+
+## Credits
+
+Hiding the duplicate caption buttons and loading symbols in the background are
 adapted from [Brave Acrylic](https://windhawk.net/mods/brave-acrylic) by
 bardelyne (MIT).
